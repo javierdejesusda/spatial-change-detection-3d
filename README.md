@@ -29,6 +29,9 @@ or on CPU only:
 uv sync --extra cpu
 ```
 
+On Linux, open3d also needs the EGL, OpenGL, and OpenMP runtime libraries
+(on Debian or Ubuntu: `sudo apt-get install libegl1 libgl1 libgomp1`).
+
 Then check the install and run the tests:
 
 ```bash
