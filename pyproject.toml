@@ -9,7 +9,11 @@ description = "Detect and describe 3D scene changes between two phone videos of 
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
-dependencies = ["numpy>=2"]
+dependencies = [
+    "numpy>=2",
+    "opencv-python-headless>=4.10",
+    "pydantic>=2.9",
+]
 
 [project.optional-dependencies]
 cpu = ["torch==2.14.1"]
@@ -25,6 +29,7 @@ dev = [
     "mypy>=1.10",
     "codespell>=2.3",
     "pre-commit>=3.8",
+    "hypothesis>=6.100",
 ]
 
 [tool.hatch.version]
@@ -54,7 +59,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
     "gpu: needs a CUDA GPU (excluded from CI)",
     "slow: long-running test",
