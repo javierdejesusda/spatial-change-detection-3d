@@ -59,6 +59,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
     "gpu: needs a CUDA GPU (excluded from CI)",
