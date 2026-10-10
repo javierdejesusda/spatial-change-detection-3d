@@ -83,4 +83,4 @@ strict = true
 files = ["src"]
 
 [tool.codespell]
-skip = "uv.lock"
+skip = "uv.lock,./data,./runs"
