@@ -14,13 +14,13 @@ Conventions:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 import numpy as np
 from numpy.typing import NDArray
 
-from spatial_change.domain.transforms import SE3, check_array
+from spatial_change.domain.transforms import SE3, Sim3, check_array
 
 _WHOLE_PIXEL_ATOL = 1e-6
 
@@ -159,3 +159,29 @@ class Frame:
             check_array(self.depth, hw, np.float32, "depth")
         if self.confidence is not None:
             check_array(self.confidence, hw, np.float32, "confidence")
+
+    def transformed(self, world_from_world: Sim3) -> Frame:
+        """Re-expresses the frame in another world frame.
+
+        The pose moves through ``Sim3.transform_pose`` and the depth is
+        multiplied by the scale, because depth is a camera-frame quantity
+        that the pose no longer carries once the world changes units.
+
+        Args:
+            world_from_world: Similarity from the current world to the
+                target world.
+
+        Returns:
+            A new frame in the target world; intrinsics, image, confidence,
+            epoch, index, and timestamp are shared with this frame.
+        """
+        depth = self.depth
+        if depth is not None:
+            depth = depth * np.float32(world_from_world.scale)
+        return replace(
+            self,
+            world_from_camera=world_from_world.transform_pose(
+                self.world_from_camera
+            ),
+            depth=depth,
+        )

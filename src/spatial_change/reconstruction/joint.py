@@ -8,6 +8,9 @@ separate alignment step.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+from numpy.typing import NDArray
+
 from spatial_change.capture import VideoFrame
 from spatial_change.capture.resize import resize_image
 from spatial_change.domain import Epoch, Frame
@@ -59,14 +62,9 @@ def reconstruct_joint(
     if not before or not after:
         raise ValueError("each epoch needs at least one keyframe")
     video_frames = [*before, *after]
-    result = reconstructor.reconstruct([vf.image for vf in video_frames])
-    if len(result.depth) != len(video_frames):
-        raise ValueError(
-            f"reconstructor returned {len(result.depth)} views for "
-            f"{len(video_frames)} images"
-        )
+    result = reconstruct_views(reconstructor, [vf.image for vf in video_frames])
     frames = [
-        _to_frame(
+        frame_from_result(
             Epoch.BEFORE if i < len(before) else Epoch.AFTER,
             video_frame,
             result,
@@ -79,9 +77,49 @@ def reconstruct_joint(
     )
 
 
-def _to_frame(
+def reconstruct_views(
+    reconstructor: Reconstructor, images: Sequence[NDArray[np.uint8]]
+) -> ReconstructionResult:
+    """Runs the reconstructor and checks that it returned one view per image.
+
+    Args:
+        reconstructor: Model that predicts poses, intrinsics, and depth.
+        images: Input images, one per requested view.
+
+    Returns:
+        The reconstruction result.
+
+    Raises:
+        ValueError: If the result holds a different number of views than
+            ``images``.
+    """
+    result = reconstructor.reconstruct(images)
+    if len(result.depth) != len(images):
+        raise ValueError(
+            f"reconstructor returned {len(result.depth)} views for "
+            f"{len(images)} images"
+        )
+    return result
+
+
+def frame_from_result(
     epoch: Epoch, video_frame: VideoFrame, result: ReconstructionResult, i: int
 ) -> Frame:
+    """Builds the posed frame for view ``i`` of a reconstruction result.
+
+    The image is resized to the depth map resolution so fusion can sample
+    colors at the depth pixels.
+
+    Args:
+        epoch: Capture the frame belongs to.
+        video_frame: Input frame that was fed to the reconstructor as view
+            ``i``.
+        result: Reconstruction output.
+        i: View index in ``result``.
+
+    Returns:
+        The frame with pose, intrinsics, depth, confidence, and image.
+    """
     intrinsics = result.intrinsics[i]
     return Frame(
         epoch=epoch,

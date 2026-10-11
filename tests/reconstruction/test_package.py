@@ -6,10 +6,15 @@ import spatial_change.reconstruction as reconstruction
 
 def test_package_exports_the_public_names() -> None:
     assert set(reconstruction.__all__) == {
+        "ChunkAlignment",
+        "DensifiedEpoch",
+        "DensifyConfig",
         "FakeReconstructor",
         "JointReconstruction",
         "Pi3XConfig",
         "Pi3XReconstructor",
+        "densify_epoch",
+        "fuse_frames",
         "reconstruct_joint",
     }
     for name in reconstruction.__all__:

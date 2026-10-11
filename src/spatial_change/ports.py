@@ -35,8 +35,9 @@ class ReconstructionResult:
         world_from_camera: Camera-to-world pose of each view.
         depth: ``(h, w)`` float32 depth along the camera z axis per view;
             0 or non-finite means invalid.
-        confidence: ``(h, w)`` float32 confidence per view, higher is more
-            reliable.
+        confidence: ``(h, w)`` float32 per-pixel confidence per view,
+            normalized to ``[0, 1]``; higher is more reliable. Consumers
+            compare it to thresholds in that range.
     """
 
     intrinsics: list[Intrinsics]

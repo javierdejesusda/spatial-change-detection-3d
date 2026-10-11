@@ -2,11 +2,10 @@ from collections.abc import Sequence
 
 import numpy as np
 import pytest
-from numpy.typing import NDArray
+from fakes import ShortReconstructor
 
 from spatial_change.capture import VideoFrame
 from spatial_change.domain import Epoch
-from spatial_change.ports import ReconstructionResult
 from spatial_change.reconstruction.fake import FakeReconstructor
 from spatial_change.reconstruction.joint import reconstruct_joint
 
@@ -117,15 +116,8 @@ def test_joint_pass_rejects_an_empty_epoch(n_before: int, n_after: int) -> None:
     assert fake.calls == []
 
 
-class _ShortReconstructor(FakeReconstructor):
-    def reconstruct(
-        self, images: Sequence[NDArray[np.uint8]]
-    ) -> ReconstructionResult:
-        return super().reconstruct(images[:-1])
-
-
 def test_joint_pass_rejects_a_result_of_the_wrong_length() -> None:
     with pytest.raises(ValueError, match="4 views for 5 images"):
         reconstruct_joint(
-            _ShortReconstructor(), _frames([0, 1], 1), _frames([0, 1, 2], 2)
+            ShortReconstructor(), _frames([0, 1], 1), _frames([0, 1, 2], 2)
         )
