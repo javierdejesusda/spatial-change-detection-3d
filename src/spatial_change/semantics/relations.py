@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict
 from spatial_change.domain import SE3, Change, ChangeType, OrientedBox
 
 _EPS = 1e-9
+_RANK_DECIMALS = 9
 _MIN_FORWARD_NORM = 0.1
 _TOWARD_COSINE = 0.8
 _SECTORS = (
@@ -319,6 +320,17 @@ def distance_to_box(point: ArrayLike, box: OrientedBox) -> float:
     return float(np.linalg.norm(delta))
 
 
+def _rank(length_m: float) -> float:
+    """Rounds a length for ranking, so ties in exact geometry stay ties.
+
+    Two landmarks at the same distance in exact arithmetic can differ by
+    float rounding, which depends on where the scene sits in the world.
+    Rounding to a nanometer removes that noise, and the ``landmark_id``
+    tie-break then decides as documented.
+    """
+    return round(length_m, _RANK_DECIMALS)
+
+
 def _surroundings(
     box: OrientedBox | None,
     landmarks: Sequence[Landmark],
@@ -343,7 +355,7 @@ def _surroundings(
         distance = distance_to_box(box.center, lm.box)
         if distance <= config.near_m:
             found.append((distance, lm))
-    found.sort(key=lambda item: (item[0], item[1].landmark_id))
+    found.sort(key=lambda item: (_rank(item[0]), item[1].landmark_id))
     return surface, [
         LandmarkRelation(
             landmark_id=lm.landmark_id,
@@ -369,9 +381,10 @@ def nearest_landmarks(
 
     Returns:
         At most ``max_landmarks`` landmarks within ``near_m`` of the
-        object's center, sorted by distance and then ``landmark_id``. The
-        landmark the object rests on is excluded, since it is already
-        expressed as the support.
+        object's center, sorted by distance and then ``landmark_id``;
+        distances equal to within a nanometer count as ties. The landmark
+        the object rests on is excluded, since it is already expressed as
+        the support.
     """
     return _surroundings(box, landmarks, config)[1]
 
@@ -431,7 +444,7 @@ def _moved_toward(
         cosine = float(displacement @ to_landmark) / (length * gap)
         if progress < config.min_displacement_m or cosine <= _TOWARD_COSINE:
             continue
-        candidates.append((-progress, lm.landmark_id, lm.label))
+        candidates.append((-_rank(progress), lm.landmark_id, lm.label))
     best = min(candidates, default=None)
     return None if best is None else best[2]
 

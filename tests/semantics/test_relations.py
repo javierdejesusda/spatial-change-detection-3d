@@ -428,6 +428,19 @@ def test_nearest_landmarks_breaks_ties_on_id_and_caps() -> None:
     assert [r.landmark_id for r in relations] == ["lm-0", "lm-1", "lm-2"]
 
 
+def test_nearest_landmarks_breaks_rounding_noise_ties_on_id() -> None:
+    # The object's center lies on the surface of both landmarks, so both are
+    # exactly 0 m away; at x = 0.1 the float math leaves "a" about 3e-17 m
+    # away, which must not put "b" first.
+    obj = make_box((0.1, 0.0, 0.5))
+    a = Landmark("a", "chair", make_box((0.6, 0.0, 0.0), (1, 1, 1)))
+    b = Landmark("b", "chair", make_box((0.1, 0.0, 1.0), (1, 1, 1)))
+
+    relations = nearest_landmarks(obj, [b, a], DEFAULT_CONFIG)
+
+    assert [r.landmark_id for r in relations] == ["a", "b"]
+
+
 def test_nearest_landmarks_excludes_supporting_landmark() -> None:
     obj = make_box((0.0, 0.0, 0.85))
 
@@ -651,6 +664,22 @@ def test_direction_toward_picks_largest_progress() -> None:
 
     assert forward.toward == "desk"
     assert reversed_order.toward == "desk"
+
+
+def test_direction_toward_breaks_rounding_noise_ties_on_id() -> None:
+    # The two landmarks mirror each other across the path, so the progress
+    # on both is equal; with the scene shifted 0.1 m along x the float math
+    # gives "b" about 5e-16 m more, which must not beat the smaller id.
+    shift = 0.1
+    size = (0.4, 0.4, 0.8)
+    a = Landmark("a", "lamp", make_box((shift + 0.7, 3.0, 0.5), size))
+    b = Landmark("b", "vase", make_box((shift - 0.7, 3.0, 0.5), size))
+
+    result = direction_of(
+        (0.0, 1.0, 0.0), None, [b, a], start=(shift, 0.0, 0.5)
+    )
+
+    assert result.toward == "lamp"
 
 
 def test_direction_toward_breaks_progress_ties_on_id() -> None:
@@ -1044,7 +1073,8 @@ def test_nearest_landmarks_sorted_and_capped(scene: Scene, cap: int) -> None:
 
     relations = nearest_landmarks(change.after_box.to_box(), landmarks, config)
 
-    keys = [(r.distance_m, r.landmark_id) for r in relations]
+    # Distances equal to within a nanometer are ties, broken by id.
+    keys = [(round(r.distance_m, 9), r.landmark_id) for r in relations]
     assert keys == sorted(keys)
     assert len(relations) <= cap
     assert all(r.distance_m <= config.near_m for r in relations)
