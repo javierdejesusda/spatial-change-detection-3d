@@ -3,7 +3,12 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 from numpy.typing import NDArray
-from visibility_scenes import SEEDS, LabelledCloud, scene_clouds
+from visibility_scenes import (
+    SEEDS,
+    LabelledCloud,
+    hidden_object_indices,
+    scene_evidence,
+)
 
 from spatial_change.domain import Epoch
 from spatial_change.synthetic.scene import (
@@ -15,7 +20,6 @@ from spatial_change.visibility import (
     PointEvidence,
     PointState,
     VisibilityConfig,
-    vote_points,
 )
 
 SENSITIVE = VisibilityConfig(min_free_votes=1)
@@ -44,15 +48,11 @@ class SceneVotes:
 
 @pytest.fixture(scope="module", params=SEEDS, ids=[f"seed{s}" for s in SEEDS])
 def votes(request: pytest.FixtureRequest) -> SceneVotes:
-    pair, before, after = scene_clouds(request.param)
-    clouds = {Epoch.BEFORE: before, Epoch.AFTER: after}
-    voters = {Epoch.BEFORE: pair.after.frames, Epoch.AFTER: pair.before.frames}
-    evidence: dict[Epoch, PointEvidence] = {}
-    sensitive: dict[Epoch, PointEvidence] = {}
-    for epoch, cloud in clouds.items():
-        evidence[epoch] = vote_points(cloud.points, voters[epoch])
-        sensitive[epoch] = vote_points(cloud.points, voters[epoch], SENSITIVE)
-    return SceneVotes(pair, clouds, evidence, sensitive)
+    default = scene_evidence(request.param, VisibilityConfig())
+    sensitive = scene_evidence(request.param, SENSITIVE)
+    return SceneVotes(
+        default.pair, default.clouds, default.evidence, sensitive.evidence
+    )
 
 
 def of_status(
@@ -143,10 +143,7 @@ def static_selection(votes: SceneVotes, epoch: Epoch) -> NDArray[np.bool_]:
     """Room shell and unchanged objects, minus the occluded and zone ones."""
     pair = votes.pair
     cloud = votes.clouds[epoch]
-    special = {
-        pair.object_by_id(i).index
-        for i in (*pair.occluded_object_ids, *pair.zone_object_ids)
-    }
+    special = hidden_object_indices(pair)
     unchanged = [
         o.index
         for o in pair.objects

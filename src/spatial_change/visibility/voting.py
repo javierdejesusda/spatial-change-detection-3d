@@ -23,6 +23,7 @@ from numpy.typing import ArrayLike, NDArray
 from spatial_change.domain import (
     Epoch,
     EpochReconstruction,
+    EvidenceCounts,
     Frame,
     Intrinsics,
 )
@@ -167,6 +168,23 @@ class PointEvidence:
     def unobserved(self) -> NDArray[np.int32]:
         """Unobserved votes per point."""
         return self.counts[:, Vote.UNOBSERVED]
+
+    def total(self, indices: NDArray[np.int64]) -> EvidenceCounts:
+        """Sums the votes of some points.
+
+        Args:
+            indices: Rows of the points to sum, shape ``(K,)``; may be empty.
+
+        Returns:
+            The vote counts summed over those rows, all zeros for none.
+        """
+        sums = self.counts[indices].sum(axis=0, dtype=np.int64)
+        return EvidenceCounts(
+            consistent=int(sums[Vote.CONSISTENT]),
+            free=int(sums[Vote.FREE]),
+            occluded=int(sums[Vote.OCCLUDED]),
+            unobserved=int(sums[Vote.UNOBSERVED]),
+        )
 
 
 @dataclass(frozen=True)

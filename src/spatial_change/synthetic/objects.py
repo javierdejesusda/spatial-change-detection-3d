@@ -16,6 +16,7 @@ import open3d as o3d
 from numpy.typing import NDArray
 
 from spatial_change.domain import SE3, OrientedBox
+from spatial_change.geometry import yaw_rotation
 
 _CYLINDER_RESOLUTION = 24
 
@@ -259,19 +260,6 @@ FACTORIES: dict[str, Callable[[np.random.Generator], ObjectModel]] = {
     "drum": make_drum,
     "shelf": make_shelf,
 }
-
-
-def yaw_rotation(yaw: float) -> NDArray[np.float64]:
-    """Builds a counterclockwise rotation about the z axis.
-
-    Args:
-        yaw: Angle in radians.
-
-    Returns:
-        A 3x3 rotation matrix.
-    """
-    c, s = np.cos(yaw), np.sin(yaw)
-    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
 
 
 def place(

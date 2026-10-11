@@ -1,10 +1,11 @@
-"""Pure geometry on domain types: projection, alignment, floor, and ICP.
+"""Pure geometry on domain types: projection, alignment, floor, boxes, ICP.
 
 Importing this package does not load open3d: ``TargetIndex`` imports it
 only when an index is built.
 """
 
 from spatial_change.geometry.alignment import umeyama
+from spatial_change.geometry.boxes import fit_upright_box, yaw_rotation
 from spatial_change.geometry.floor import (
     FloorConfig,
     FloorPlane,
@@ -32,10 +33,12 @@ __all__ = [
     "TargetIndex",
     "camera_up_hint",
     "fit_floor",
+    "fit_upright_box",
     "floor_frame",
     "in_image",
     "project",
     "trimmed_icp",
     "umeyama",
     "unproject_depth",
+    "yaw_rotation",
 ]

@@ -11,6 +11,7 @@ from spatial_change.domain import (
     SE3,
     Epoch,
     EpochReconstruction,
+    EvidenceCounts,
     Frame,
     Intrinsics,
     Sim3,
@@ -357,6 +358,34 @@ def test_evidence_properties_return_the_count_columns() -> None:
     np.testing.assert_array_equal(evidence.occluded, [1])
     np.testing.assert_array_equal(evidence.unobserved, [0])
     assert evidence.states.dtype == np.int8
+
+
+def test_total_sums_the_votes_of_the_selected_points() -> None:
+    big = np.iinfo(np.int32).max
+    evidence = PointEvidence(
+        np.array(
+            [[1, 2, 3, 4], [5, 6, 7, 8], [big, 0, 0, big], [9, 10, 11, 12]],
+            dtype=np.int32,
+        ),
+        np.zeros(4, dtype=np.int8),
+    )
+
+    assert evidence.total(np.array([0, 3])) == EvidenceCounts(
+        consistent=10, free=12, occluded=14, unobserved=16
+    )
+    assert evidence.total(np.array([2, 2])) == EvidenceCounts(
+        consistent=2 * big, free=0, occluded=0, unobserved=2 * big
+    )
+
+
+def test_total_of_no_points_is_all_zeros() -> None:
+    evidence = PointEvidence(
+        np.ones((3, 4), dtype=np.int32), np.zeros(3, dtype=np.int8)
+    )
+
+    assert evidence.total(np.empty(0, dtype=np.int64)) == EvidenceCounts(
+        consistent=0, free=0, occluded=0, unobserved=0
+    )
 
 
 CAMERA = Intrinsics(60.0, 58.0, 31.5, 23.5, 64, 48)
