@@ -16,6 +16,7 @@ dependencies = [
     "opencv-python-headless>=4.10",
     "pi3",
     "pydantic>=2.9",
+    "transformers>=5.19.0",
 ]
 
 [project.optional-dependencies]

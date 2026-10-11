@@ -130,9 +130,12 @@ class FeatureEncoder(Unloadable, Protocol):
             image: ``(H, W, 3)`` uint8 RGB image.
 
         Returns:
-            ``(h, w, C)`` float32 features, where feature ``(i, j)`` covers
-            the input patch starting at pixel row ``i * patch_size`` and
-            column ``j * patch_size``.
+            ``(h, w, C)`` float32 features, with ``h = ceil(H / patch_size)``
+            and ``w = ceil(W / patch_size)``. Feature ``(i, j)`` covers the
+            input patch starting at pixel row ``i * patch_size`` and column
+            ``j * patch_size``. The last row and column of patches may extend
+            past the image; the encoder fills them, for example by edge
+            replication.
         """
         ...
 
