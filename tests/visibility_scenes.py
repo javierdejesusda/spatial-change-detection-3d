@@ -10,16 +10,20 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from spatial_change.change import Candidate
 from spatial_change.domain import Epoch
 from spatial_change.geometry.projection import unproject_depth
 from spatial_change.synthetic.scene import (
+    ObjectStatus,
     SceneConfig,
     SyntheticEpoch,
+    SyntheticObject,
     SyntheticScenePair,
     generate_scene_pair,
 )
 from spatial_change.visibility import (
     PointEvidence,
+    PointState,
     VisibilityConfig,
     vote_points,
 )
@@ -61,6 +65,82 @@ def labelled_cloud(data: SyntheticEpoch) -> LabelledCloud:
         )
         labels.append(instances[valid])
     return LabelledCloud(np.concatenate(points), np.concatenate(labels))
+
+
+def changed_objects(
+    pair: SyntheticScenePair, epoch: Epoch
+) -> list[SyntheticObject]:
+    """Lists the changed objects that exist in an epoch.
+
+    Args:
+        pair: The scene pair.
+        epoch: The epoch.
+
+    Returns:
+        The objects whose status is not unchanged and that exist in it.
+    """
+    return [
+        o
+        for o in pair.objects
+        if o.status != ObjectStatus.UNCHANGED and o.exists_in(epoch)
+    ]
+
+
+def majority(
+    cloud: LabelledCloud, point_indices: NDArray[np.intp]
+) -> tuple[int, float]:
+    """Returns the commonest label among some points and its share.
+
+    Args:
+        cloud: The labelled cloud.
+        point_indices: Indices into the cloud, such as a candidate's.
+
+    Returns:
+        The label and the share of the points that carry it.
+    """
+    values, counts = np.unique(cloud.labels[point_indices], return_counts=True)
+    return int(values[np.argmax(counts)]), float(counts.max() / counts.sum())
+
+
+def changed_points_of(
+    cloud: LabelledCloud, states: NDArray[np.int8], obj: SyntheticObject
+) -> NDArray[np.bool_]:
+    """Marks the CHANGED points of a cloud that lie on an object.
+
+    Args:
+        cloud: The labelled cloud.
+        states: Point states of the cloud.
+        obj: The object.
+
+    Returns:
+        ``(N,)`` mask of the CHANGED points with the object's label.
+    """
+    return (states == PointState.CHANGED) & (cloud.labels == obj.index)
+
+
+def dominant(
+    cloud: LabelledCloud,
+    states: NDArray[np.int8],
+    obj: SyntheticObject,
+    candidates: tuple[Candidate, ...],
+) -> tuple[Candidate, float]:
+    """Finds the candidate with most of an object's CHANGED points.
+
+    Args:
+        cloud: The labelled cloud.
+        states: Point states of the cloud.
+        obj: The object, which must have CHANGED points.
+        candidates: The candidates found on the cloud, at least one.
+
+    Returns:
+        The candidate and its share of the object's CHANGED points.
+    """
+    mine = changed_points_of(cloud, states, obj)
+    assert mine.any(), obj.object_id
+    assert candidates, f"no candidates for {obj.object_id}"
+    held = [int(mine[c.point_indices].sum()) for c in candidates]
+    best = int(np.argmax(held))
+    return candidates[best], held[best] / int(mine.sum())
 
 
 @functools.cache

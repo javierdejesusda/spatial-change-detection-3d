@@ -2,11 +2,14 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
-from numpy.typing import NDArray
 from visibility_scenes import (
     SEEDS,
     LabelledCloud,
+    changed_objects,
+    changed_points_of,
+    dominant,
     hidden_object_indices,
+    majority,
     scene_evidence,
 )
 
@@ -19,7 +22,6 @@ from spatial_change.synthetic.scene import (
 )
 from spatial_change.visibility import (
     PointEvidence,
-    PointState,
     VisibilityConfig,
 )
 
@@ -62,47 +64,6 @@ def found(request: pytest.FixtureRequest) -> SceneCandidates:
     return SceneCandidates(votes.pair, votes.clouds, votes.evidence, candidates)
 
 
-def changed_objects(
-    found: SceneCandidates, epoch: Epoch
-) -> list[SyntheticObject]:
-    """Lists the changed objects that exist in an epoch."""
-    return [
-        o
-        for o in found.pair.objects
-        if o.status != ObjectStatus.UNCHANGED and o.exists_in(epoch)
-    ]
-
-
-def majority(
-    found: SceneCandidates, epoch: Epoch, candidate: Candidate
-) -> tuple[int, float]:
-    """Returns the commonest label of a candidate and its share."""
-    labels = found.clouds[epoch].labels[candidate.point_indices]
-    values, counts = np.unique(labels, return_counts=True)
-    return int(values[np.argmax(counts)]), float(counts.max() / counts.sum())
-
-
-def changed_points_of(
-    found: SceneCandidates, epoch: Epoch, obj: SyntheticObject
-) -> NDArray[np.bool_]:
-    cloud = found.clouds[epoch]
-    return (found.evidence[epoch].states == PointState.CHANGED) & (
-        cloud.labels == obj.index
-    )
-
-
-def dominant(
-    found: SceneCandidates, epoch: Epoch, obj: SyntheticObject
-) -> tuple[Candidate, float]:
-    """Returns the candidate with most of the object's CHANGED points."""
-    mine = changed_points_of(found, epoch, obj)
-    assert mine.any(), obj.object_id
-    assert found.candidates[epoch], f"no candidates in {epoch.value}"
-    held = [int(mine[c.point_indices].sum()) for c in found.candidates[epoch]]
-    best = int(np.argmax(held))
-    return found.candidates[epoch][best], held[best] / int(mine.sum())
-
-
 def bounds(obj: SyntheticObject) -> tuple[float, float]:
     """Returns the minimum share and the maximum center error of an object."""
     if obj.status == ObjectStatus.MOVED:
@@ -113,8 +74,8 @@ def bounds(obj: SyntheticObject) -> tuple[float, float]:
 def test_the_scene_has_a_removed_an_added_and_a_moved_object(
     found: SceneCandidates,
 ) -> None:
-    statuses = [o.status for o in changed_objects(found, Epoch.BEFORE)]
-    statuses += [o.status for o in changed_objects(found, Epoch.AFTER)]
+    statuses = [o.status for o in changed_objects(found.pair, Epoch.BEFORE)]
+    statuses += [o.status for o in changed_objects(found.pair, Epoch.AFTER)]
 
     assert sorted(statuses) == sorted(
         [
@@ -130,9 +91,15 @@ def test_the_scene_has_a_removed_an_added_and_a_moved_object(
 def test_every_changed_object_has_a_dominant_candidate(
     found: SceneCandidates, epoch: Epoch
 ) -> None:
-    for obj in changed_objects(found, epoch):
-        candidate, share = dominant(found, epoch, obj)
-        label, _ = majority(found, epoch, candidate)
+    cloud = found.clouds[epoch]
+    for obj in changed_objects(found.pair, epoch):
+        candidate, share = dominant(
+            cloud,
+            found.evidence[epoch].states,
+            obj,
+            found.candidates[epoch],
+        )
+        label, _ = majority(cloud, candidate.point_indices)
         min_share, _ = bounds(obj)
 
         assert label == obj.index, obj.object_id
@@ -145,7 +112,7 @@ def test_every_candidate_is_pure(found: SceneCandidates, epoch: Epoch) -> None:
     assert found.candidates[epoch]
 
     for candidate in found.candidates[epoch]:
-        _, purity = majority(found, epoch, candidate)
+        _, purity = majority(found.clouds[epoch], candidate.point_indices)
 
         assert purity >= MIN_PURITY, candidate.candidate_id
 
@@ -155,10 +122,10 @@ def test_no_candidate_is_unchanged_structure(
     found: SceneCandidates, epoch: Epoch
 ) -> None:
     hidden = hidden_object_indices(found.pair)
-    changed = {o.index for o in changed_objects(found, epoch)}
+    changed = {o.index for o in changed_objects(found.pair, epoch)}
 
     for candidate in found.candidates[epoch]:
-        label, _ = majority(found, epoch, candidate)
+        label, _ = majority(found.clouds[epoch], candidate.point_indices)
 
         assert label != -1, candidate.candidate_id
         assert label not in hidden, candidate.candidate_id
@@ -170,10 +137,11 @@ def test_the_dominant_box_sits_on_the_object(
     found: SceneCandidates, epoch: Epoch
 ) -> None:
     cloud = found.clouds[epoch]
-    for obj in changed_objects(found, epoch):
-        candidate, _ = dominant(found, epoch, obj)
+    states = found.evidence[epoch].states
+    for obj in changed_objects(found.pair, epoch):
+        candidate, _ = dominant(cloud, states, obj, found.candidates[epoch])
         min_share, max_error = bounds(obj)
-        mine = cloud.points[changed_points_of(found, epoch, obj)]
+        mine = cloud.points[changed_points_of(cloud, states, obj)]
         error = float(
             np.linalg.norm(candidate.box.center - obj.box(epoch).center)
         )
