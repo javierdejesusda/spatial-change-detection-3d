@@ -11,6 +11,9 @@ from numpy.typing import ArrayLike, NDArray
 from spatial_change.domain import SE3, Intrinsics
 from spatial_change.domain.transforms import check_array
 
+DEFAULT_MIN_CONFIDENCE = 0.1
+"""Default per-pixel confidence threshold; Pi3's demo uses 0.1 as well."""
+
 
 def project(
     points_world: ArrayLike,
@@ -73,6 +76,24 @@ def in_image(
         & (v >= -0.5)
         & (v < intrinsics.height - 0.5)
     )
+
+
+def confident_pixels(
+    depth: NDArray[np.float32],
+    confidence: NDArray[np.float32],
+    threshold: float,
+) -> NDArray[np.bool_]:
+    """Marks the pixels with a valid depth and enough confidence.
+
+    Args:
+        depth: ``(H, W)`` depth map; 0 and non-finite values are invalid.
+        confidence: ``(H, W)`` confidence map.
+        threshold: Minimum confidence, inclusive.
+
+    Returns:
+        ``(H, W)`` boolean mask.
+    """
+    return np.isfinite(depth) & (depth > 0) & (confidence >= threshold)
 
 
 def unproject_depth(

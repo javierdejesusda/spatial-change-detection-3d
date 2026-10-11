@@ -17,12 +17,12 @@ from numpy.typing import NDArray
 from spatial_change.capture import VideoFrame
 from spatial_change.domain import Frame, Sim3
 from spatial_change.geometry.alignment import umeyama
-from spatial_change.geometry.projection import unproject_depth
-from spatial_change.ports import ReconstructionResult, Reconstructor
-from spatial_change.reconstruction.fusion import (
+from spatial_change.geometry.projection import (
     DEFAULT_MIN_CONFIDENCE,
     confident_pixels,
+    unproject_depth,
 )
+from spatial_change.ports import ReconstructionResult, Reconstructor
 from spatial_change.reconstruction.joint import (
     frame_from_result,
     reconstruct_views,

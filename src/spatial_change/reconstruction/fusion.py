@@ -7,10 +7,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from spatial_change.domain import EpochReconstruction, Frame
-from spatial_change.geometry.projection import unproject_depth
-
-DEFAULT_MIN_CONFIDENCE = 0.1
-"""Default per-pixel confidence threshold; Pi3's demo uses 0.1 as well."""
+from spatial_change.geometry.projection import (
+    DEFAULT_MIN_CONFIDENCE,
+    confident_pixels,
+    unproject_depth,
+)
 
 
 @dataclass(frozen=True, eq=False)
@@ -31,24 +32,6 @@ class _VoxelTable:
     point_sums: NDArray[np.float64]
     color_sums: NDArray[np.int64]
     peak: NDArray[np.float32]
-
-
-def confident_pixels(
-    depth: NDArray[np.float32],
-    confidence: NDArray[np.float32],
-    threshold: float,
-) -> NDArray[np.bool_]:
-    """Marks the pixels with a valid depth and enough confidence.
-
-    Args:
-        depth: ``(H, W)`` depth map; 0 and non-finite values are invalid.
-        confidence: ``(H, W)`` confidence map.
-        threshold: Minimum confidence, inclusive.
-
-    Returns:
-        ``(H, W)`` boolean mask.
-    """
-    return np.isfinite(depth) & (depth > 0) & (confidence >= threshold)
 
 
 def fuse_frames(
