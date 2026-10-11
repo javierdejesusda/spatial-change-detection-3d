@@ -124,6 +124,33 @@ def as_points(points: ArrayLike, name: str = "points") -> NDArray[np.float64]:
     return array
 
 
+def as_finite_points(
+    points: ArrayLike, name: str, min_count: int
+) -> NDArray[np.float64]:
+    """Returns ``points`` as a finite float64 ``(N, 3)`` array of enough rows.
+
+    Args:
+        points: Array-like of row-stacked 3D points.
+        name: Field name used in error messages.
+        min_count: Smallest accepted number of points.
+
+    Returns:
+        The points as a float64 array.
+
+    Raises:
+        ValueError: If ``points`` does not have shape ``(N, 3)``, has fewer
+            than ``min_count`` rows, or holds a non-finite value.
+    """
+    array = as_points(points, name)
+    if len(array) < min_count:
+        raise ValueError(
+            f"{name} needs at least {min_count} points, got {len(array)}"
+        )
+    if not np.isfinite(array).all():
+        raise ValueError(f"{name} must be finite")
+    return array
+
+
 def _split_affine(
     m: ArrayLike,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:

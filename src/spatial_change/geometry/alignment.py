@@ -4,12 +4,13 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from spatial_change.domain import Sim3
-from spatial_change.domain.transforms import as_points
+from spatial_change.domain.transforms import as_finite_points
 
 # The rotation is unique only when the cross-covariance has rank >= 2. A
 # second singular value this small relative to the first means one of the
 # point sets is collinear or coincident.
 _DEGENERACY_RTOL = 1e-9
+_MIN_POINTS = 3
 
 
 def umeyama(src: ArrayLike, dst: ArrayLike, with_scale: bool = True) -> Sim3:
@@ -34,18 +35,14 @@ def umeyama(src: ArrayLike, dst: ArrayLike, with_scale: bool = True) -> Sim3:
             value is not finite, or the points do not determine a rotation
             (either set is collinear or coincident).
     """
-    src_points = as_points(src, "src")
-    dst_points = as_points(dst, "dst")
+    src_points = as_finite_points(src, "src", _MIN_POINTS)
+    dst_points = as_finite_points(dst, "dst", _MIN_POINTS)
     if src_points.shape != dst_points.shape:
         raise ValueError(
             f"src and dst shapes differ: {src_points.shape} vs "
             f"{dst_points.shape}"
         )
     n = len(src_points)
-    if n < 3:
-        raise ValueError(f"need at least 3 correspondences, got {n}")
-    if not (np.isfinite(src_points).all() and np.isfinite(dst_points).all()):
-        raise ValueError("src and dst must be finite")
 
     src_mean = src_points.mean(axis=0)
     dst_mean = dst_points.mean(axis=0)

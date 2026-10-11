@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from rotations import random_rotation, rotation_z
 
 from spatial_change.domain import SE3, Sim3
-from spatial_change.domain.transforms import check_array
+from spatial_change.domain.transforms import as_finite_points, check_array
 
 _seeded_rotations = st.integers(0, 2**32 - 1).map(
     lambda seed: random_rotation(np.random.default_rng(seed))
@@ -266,3 +266,34 @@ def test_check_array_message_names_field_expected_and_actual() -> None:
         "confidence must be float64 with shape (N,), "
         "got float64 with shape (2, 2)"
     )
+
+
+def test_as_finite_points_returns_a_float64_array() -> None:
+    out = as_finite_points([[1, 2, 3]] * 4, "cloud", 3)
+
+    assert out.dtype == np.float64
+    assert out.shape == (4, 3)
+
+
+@pytest.mark.parametrize(
+    ("value", "match"),
+    [
+        (np.zeros((5, 2)), "shape"),
+        (np.zeros(9), "shape"),
+        (np.zeros((2, 3)), "at least 3"),
+        (np.full((5, 3), np.nan), "finite"),
+        (np.full((5, 3), np.inf), "finite"),
+    ],
+)
+def test_as_finite_points_rejects_bad_clouds_naming_the_field(
+    value: NDArray[np.float64], match: str
+) -> None:
+    with pytest.raises(ValueError, match=rf"^cloud.*{match}"):
+        as_finite_points(value, "cloud", 3)
+
+
+def test_as_finite_points_honours_min_count() -> None:
+    as_finite_points(np.zeros((2, 3)), "cloud", 2)
+
+    with pytest.raises(ValueError, match="at least 2"):
+        as_finite_points(np.zeros((1, 3)), "cloud", 2)

@@ -3,7 +3,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from numpy.typing import NDArray
-from rotations import random_rotation
+from rotations import random_rotation, rotation_angle_deg
 
 from spatial_change.domain import Sim3
 from spatial_change.geometry import umeyama
@@ -15,13 +15,6 @@ def _random_sim3(rng: np.random.Generator) -> Sim3:
         random_rotation(rng),
         rng.uniform(-10.0, 10.0, 3),
     )
-
-
-def _rotation_error_deg(
-    a: NDArray[np.float64], b: NDArray[np.float64]
-) -> float:
-    cos = (np.trace(a.T @ b) - 1.0) / 2.0
-    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
 
 @given(st.integers(0, 2**32 - 1), st.integers(3, 50))
@@ -73,7 +66,7 @@ def test_recovers_sim3_under_noise() -> None:
 
     estimate = umeyama(src, dst)
 
-    assert _rotation_error_deg(estimate.rotation, truth.rotation) < 0.5
+    assert rotation_angle_deg(estimate.rotation, truth.rotation) < 0.5
     assert abs(estimate.scale / truth.scale - 1.0) < 0.01
 
 
