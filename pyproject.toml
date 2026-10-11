@@ -10,9 +10,11 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "huggingface-hub>=2.2.0",
     "numpy>=2",
     "open3d>=0.20",
     "opencv-python-headless>=4.10",
+    "pi3",
     "pydantic>=2.9",
 ]
 
@@ -47,6 +49,7 @@ torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu130", extra = "cu130" },
 ]
+pi3 = { git = "https://github.com/yyfz/Pi3", rev = "9fa3ddb3f8d53041f8b2738df404f62223bbaa7b" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -82,6 +85,10 @@ convention = "google"
 [tool.mypy]
 strict = true
 files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pi3", "pi3.*"]
+ignore_missing_imports = true
 
 [tool.codespell]
 skip = "uv.lock,./data,./runs"

@@ -2,8 +2,13 @@ import numpy as np
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from numpy.typing import NDArray
 
-from spatial_change.capture.resize import ResizePolicy, resize_for_backbone
+from spatial_change.capture.resize import (
+    ResizePolicy,
+    resize_for_backbone,
+    resize_image,
+)
 from spatial_change.domain import Intrinsics
 
 POLICY = ResizePolicy(long_side=518, multiple_of=14)
@@ -99,3 +104,57 @@ def test_target_size_follows_the_policy() -> None:
     assert POLICY.target_size(1920, 1080) == (518, 294)
     assert POLICY.target_size(100, 60) == (98, 56)
     assert POLICY.target_size(5, 40) == (14, 42)
+
+
+def test_resize_image_averages_when_shrinking() -> None:
+    image = np.zeros((4, 4, 3), np.uint8)
+    image[:2, :2] = 100
+    image[:2, 2:] = 200
+    image[2:, :2] = 40
+
+    out = resize_image(image, 2, 2)
+
+    assert out.shape == (2, 2, 3)
+    assert out.dtype == np.uint8
+    np.testing.assert_array_equal(out[..., 0], [[100, 200], [40, 0]])
+
+
+def test_resize_image_interpolates_when_enlarging() -> None:
+    image = np.zeros((1, 2, 3), np.uint8)
+    image[0, 1] = 100
+
+    out = resize_image(image, 4, 1)
+
+    np.testing.assert_array_equal(out[0, :, 0], [0, 25, 75, 100])
+
+
+def test_resize_image_interpolates_when_only_one_side_grows() -> None:
+    image = np.zeros((2, 4, 3), np.uint8)
+    image[1] = 100
+
+    out = resize_image(image, 2, 4)
+
+    assert out.shape == (4, 2, 3)
+    np.testing.assert_array_equal(out[:, 0, 0], [0, 25, 75, 100])
+
+
+def test_resize_image_returns_the_input_at_the_requested_size() -> None:
+    image = np.zeros((3, 5, 3), np.uint8)
+
+    assert resize_image(image, 5, 3) is image
+
+
+@pytest.mark.parametrize(
+    ("image", "width", "height"),
+    [
+        (np.zeros((3, 5, 3), np.uint8), 0, 3),
+        (np.zeros((3, 5, 3), np.uint8), 5, -1),
+        (np.zeros((3, 5), np.uint8), 5, 3),
+        (np.zeros((3, 5, 3), np.float32), 5, 3),
+    ],
+)
+def test_resize_image_rejects_invalid_arguments(
+    image: NDArray[np.generic], width: int, height: int
+) -> None:
+    with pytest.raises(ValueError):
+        resize_image(image, width, height)

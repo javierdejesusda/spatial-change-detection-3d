@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from spatial_change.domain.transforms import check_array
+
 
 @dataclass(frozen=True)
 class ResizePolicy:
@@ -80,12 +82,47 @@ def resize_for_backbone(
     """
     height, width = image.shape[:2]
     new_h, new_w = policy.target_size(height, width)
-    interpolation = (
-        cv2.INTER_AREA
-        if new_w <= width and new_h <= height
-        else cv2.INTER_LINEAR
+    return _resize(image, new_w, new_h), new_w / width, new_h / height
+
+
+def resize_image(
+    image: NDArray[np.uint8], width: int, height: int
+) -> NDArray[np.uint8]:
+    """Resizes an RGB image, averaging when shrinking.
+
+    Area averaging avoids aliasing when the image shrinks in both
+    directions; any enlargement uses bilinear interpolation, because area
+    averaging degrades to nearest-neighbor there.
+
+    Args:
+        image: ``(H, W, 3)`` uint8 RGB image.
+        width: Target width in pixels.
+        height: Target height in pixels.
+
+    Returns:
+        The resized image, or ``image`` itself if it already has the target
+        size.
+
+    Raises:
+        ValueError: If the target size is not positive or ``image`` is not
+            an ``(H, W, 3)`` uint8 array.
+    """
+    check_array(image, (None, None, 3), np.uint8, "image")
+    if width <= 0 or height <= 0:
+        raise ValueError("target width and height must be positive")
+    old_height, old_width = image.shape[:2]
+    if (old_width, old_height) == (width, height):
+        return image
+    return _resize(image, width, height)
+
+
+def _resize(
+    image: NDArray[np.uint8], width: int, height: int
+) -> NDArray[np.uint8]:
+    old_height, old_width = image.shape[:2]
+    shrinking = width <= old_width and height <= old_height
+    interpolation = cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR
+    return np.asarray(
+        cv2.resize(image, (width, height), interpolation=interpolation),
+        dtype=np.uint8,
     )
-    resized = cv2.resize(
-        image, (new_w, new_h), interpolation=interpolation
-    ).astype(np.uint8, copy=False)
-    return resized, new_w / width, new_h / height
