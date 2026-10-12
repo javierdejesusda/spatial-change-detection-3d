@@ -16,6 +16,7 @@ transform can be shared freely without defensive copying.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -103,6 +104,54 @@ def as_rotation(
     if not orthonormal or abs(np.linalg.det(rotation) - 1.0) > ROTATION_ATOL:
         raise ValueError(f"{name} must be orthonormal with determinant +1")
     return rotation
+
+
+def rotation_to_quaternion(
+    rotation: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Converts a rotation matrix to a unit quaternion.
+
+    Args:
+        rotation: Proper rotation of shape ``(3, 3)``.
+
+    Returns:
+        The unit quaternion ``(x, y, z, w)``.
+    """
+    r = rotation
+    trace = r[0, 0] + r[1, 1] + r[2, 2]
+    if trace > 0.0:
+        s = 2.0 * math.sqrt(trace + 1.0)
+        q = (
+            (r[2, 1] - r[1, 2]) / s,
+            (r[0, 2] - r[2, 0]) / s,
+            (r[1, 0] - r[0, 1]) / s,
+            s / 4.0,
+        )
+    elif r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + r[0, 0] - r[1, 1] - r[2, 2])
+        q = (
+            s / 4.0,
+            (r[0, 1] + r[1, 0]) / s,
+            (r[0, 2] + r[2, 0]) / s,
+            (r[2, 1] - r[1, 2]) / s,
+        )
+    elif r[1, 1] > r[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + r[1, 1] - r[0, 0] - r[2, 2])
+        q = (
+            (r[0, 1] + r[1, 0]) / s,
+            s / 4.0,
+            (r[1, 2] + r[2, 1]) / s,
+            (r[0, 2] - r[2, 0]) / s,
+        )
+    else:
+        s = 2.0 * math.sqrt(1.0 + r[2, 2] - r[0, 0] - r[1, 1])
+        q = (
+            (r[0, 2] + r[2, 0]) / s,
+            (r[1, 2] + r[2, 1]) / s,
+            s / 4.0,
+            (r[1, 0] - r[0, 1]) / s,
+        )
+    return np.array(q)
 
 
 def as_points(points: ArrayLike, name: str = "points") -> NDArray[np.float64]:

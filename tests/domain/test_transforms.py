@@ -6,7 +6,11 @@ from numpy.typing import NDArray
 from rotations import random_rotation, rotation_z
 
 from spatial_change.domain import SE3, Sim3
-from spatial_change.domain.transforms import as_finite_points, check_array
+from spatial_change.domain.transforms import (
+    as_finite_points,
+    check_array,
+    rotation_to_quaternion,
+)
 
 _seeded_rotations = st.integers(0, 2**32 - 1).map(
     lambda seed: random_rotation(np.random.default_rng(seed))
@@ -297,3 +301,49 @@ def test_as_finite_points_honours_min_count() -> None:
 
     with pytest.raises(ValueError, match="at least 2"):
         as_finite_points(np.zeros((1, 3)), "cloud", 2)
+
+
+def _matrix_of(q: NDArray[np.float64]) -> NDArray[np.float64]:
+    x, y, z, w = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def test_the_identity_has_the_unit_quaternion() -> None:
+    np.testing.assert_allclose(
+        rotation_to_quaternion(np.eye(3)), [0.0, 0.0, 0.0, 1.0]
+    )
+
+
+def test_a_quarter_turn_about_z() -> None:
+    root = np.sqrt(0.5)
+
+    np.testing.assert_allclose(
+        rotation_to_quaternion(rotation_z(90.0)), [0.0, 0.0, root, root]
+    )
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_a_half_turn_about_each_axis_round_trips(axis: int) -> None:
+    rotation = np.diag([-1.0, -1.0, -1.0])
+    rotation[axis, axis] = 1.0
+
+    q = rotation_to_quaternion(rotation)
+
+    assert np.linalg.norm(q) == pytest.approx(1.0)
+    np.testing.assert_allclose(_matrix_of(q), rotation, atol=1e-12)
+
+
+@given(rotations)
+def test_the_quaternion_is_a_unit_one_that_rebuilds_the_rotation(
+    rotation: NDArray[np.float64],
+) -> None:
+    q = rotation_to_quaternion(rotation)
+
+    assert np.linalg.norm(q) == pytest.approx(1.0)
+    np.testing.assert_allclose(_matrix_of(q), rotation, atol=1e-9)
