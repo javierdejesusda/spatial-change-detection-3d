@@ -20,7 +20,9 @@ from spatial_change.geometry.icp import (
     trimmed_icp,
 )
 from spatial_change.geometry.projection import (
+    DepthResiduals,
     VisiblePoints,
+    depth_residual,
     in_image,
     project,
     unproject_depth,
@@ -36,6 +38,7 @@ from spatial_change.geometry.rotation import rotation_angle_deg
 from spatial_change.geometry.voxels import label_voxel_cells, voxel_cells
 
 __all__ = [
+    "DepthResiduals",
     "FloorConfig",
     "FloorPlane",
     "IcpConfig",
@@ -45,6 +48,7 @@ __all__ = [
     "TargetIndex",
     "VisiblePoints",
     "camera_up_hint",
+    "depth_residual",
     "fit_floor",
     "fit_upright_box",
     "floor_frame",

@@ -9,6 +9,7 @@ from rotations import random_rotation
 from spatial_change.domain import SE3, Epoch, Frame, Intrinsics
 from spatial_change.geometry import (
     VisiblePoints,
+    depth_residual,
     in_image,
     project,
     unproject_depth,
@@ -285,3 +286,45 @@ def test_no_points_give_empty_results() -> None:
     assert result.indices.shape == (0,)
     assert result.uv.shape == (0, 2)
     assert result.pixels.shape == (0, 2)
+
+
+def test_depth_residual_is_the_signed_difference_to_the_observed_depth() -> (
+    None
+):
+    frame = _wall_frame()
+    usable = usable_pixels(frame, 0.1)
+    points = np.array(
+        [
+            [0.0, 0.0, 3.0],
+            [0.0, 0.0, 2.0],
+            [0.0, 0.0, 1.0],
+            [9.0, 0.0, 2.0],
+            [0.0, 0.0, -2.0],
+        ],
+        np.float64,
+    )
+
+    result = depth_residual(points, frame, usable)
+
+    np.testing.assert_array_equal(result.indices, [0, 1, 2])
+    np.testing.assert_allclose(result.z, [3.0, 2.0, 1.0])
+    np.testing.assert_allclose(result.residual, [1.0, 0.0, -1.0])
+    np.testing.assert_array_equal(result.pixels, [[16, 12]] * 3)
+    np.testing.assert_allclose(result.uv, [[15.5, 11.5]] * 3)
+
+
+def test_depth_residual_skips_unusable_pixels() -> None:
+    frame = _wall_frame()
+    usable = np.zeros_like(usable_pixels(frame, 0.1))
+
+    result = depth_residual(np.array([[0.0, 0.0, 2.0]]), frame, usable)
+
+    assert len(result.indices) == 0
+    assert result.residual.shape == (0,)
+
+
+def test_depth_residual_needs_a_depth_map() -> None:
+    frame = dataclasses.replace(_wall_frame(), depth=None)
+
+    with pytest.raises(ValueError, match="depth"):
+        depth_residual(np.zeros((1, 3)), frame, np.ones((24, 32), bool))

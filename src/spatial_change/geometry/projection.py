@@ -184,6 +184,64 @@ class VisiblePoints:
     pixels: NDArray[np.intp]
 
 
+@dataclass(frozen=True, eq=False)
+class DepthResiduals:
+    """Points that land on a usable pixel, with their depth residual.
+
+    Attributes:
+        indices: Rows of the points in the input, ascending, shape ``(M,)``.
+        uv: Their pixel coordinates, shape ``(M, 2)``, float64.
+        pixels: The pixels they fall on, ``np.rint`` of ``uv`` as
+            ``(column, row)``, shape ``(M, 2)``, intp.
+        z: Their camera-frame depth, shape ``(M,)``.
+        residual: ``z`` minus the frame's depth at the pixel, shape
+            ``(M,)``: negative in front of the observed surface, positive
+            behind it.
+    """
+
+    indices: NDArray[np.intp]
+    uv: NDArray[np.float64]
+    pixels: NDArray[np.intp]
+    z: NDArray[np.float64]
+    residual: NDArray[np.float64]
+
+
+def depth_residual(
+    points: NDArray[np.float64],
+    frame: Frame,
+    usable: NDArray[np.bool_],
+) -> DepthResiduals:
+    """Compares point depths with the depth a frame observed there.
+
+    Only points that project into the image and land on a usable pixel are
+    returned. Callers apply their own tolerance to the residual.
+
+    Args:
+        points: World points of shape ``(N, 3)``.
+        frame: The frame, with depth.
+        usable: The frame's usable pixels, from ``usable_pixels``.
+
+    Returns:
+        The surviving points with their pixels, depths and residuals.
+
+    Raises:
+        ValueError: If the frame has no depth map or ``points`` does not
+            have shape ``(N, 3)``.
+    """
+    if frame.depth is None:
+        raise ValueError("frame has no depth map")
+    uv, z = project(points, frame.intrinsics, frame.world_from_camera)
+    inside = np.flatnonzero(in_image(uv, z, frame.intrinsics))
+    uv, z = uv[inside], z[inside]
+    pixels = np.rint(uv).astype(np.intp)
+    rows, cols = pixels[:, 1], pixels[:, 0]
+    keep = usable[rows, cols]
+    residual = z - frame.depth[rows, cols]
+    return DepthResiduals(
+        inside[keep], uv[keep], pixels[keep], z[keep], residual[keep]
+    )
+
+
 def visible_points(
     points: NDArray[np.float64],
     frame: Frame,
@@ -212,15 +270,6 @@ def visible_points(
         ValueError: If the frame has no depth map or ``points`` does not
             have shape ``(N, 3)``.
     """
-    if frame.depth is None:
-        raise ValueError("frame has no depth map")
-    uv, z = project(points, frame.intrinsics, frame.world_from_camera)
-    inside = np.flatnonzero(in_image(uv, z, frame.intrinsics))
-    uv, z = uv[inside], z[inside]
-    pixels = np.rint(uv).astype(np.intp)
-    rows, cols = pixels[:, 1], pixels[:, 0]
-    depth_error = np.abs(z - frame.depth[rows, cols])
-    seen = usable[rows, cols] & (
-        depth_error <= abs_tolerance + rel_tolerance * z
-    )
-    return VisiblePoints(inside[seen], uv[seen], pixels[seen])
+    res = depth_residual(points, frame, usable)
+    seen = np.abs(res.residual) <= abs_tolerance + rel_tolerance * res.z
+    return VisiblePoints(res.indices[seen], res.uv[seen], res.pixels[seen])
