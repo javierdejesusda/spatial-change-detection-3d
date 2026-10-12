@@ -185,8 +185,12 @@ def test_a_smaller_box_inside_a_larger_one_is_not_the_same_object() -> None:
     assert [c.type for c in changes] == [ChangeType.REMOVED, ChangeType.ADDED]
 
 
-def test_a_thin_slab_of_an_object_seen_after_matches_the_whole() -> None:
-    whole, moved = chair_pair(0.5)
+@pytest.mark.parametrize("seed", range(3))
+def test_a_thin_slab_of_an_object_seen_after_matches_the_whole(
+    seed: int,
+) -> None:
+    whole = chair(seed=seed + 1)
+    moved = chair(x=0.5, seed=seed + 100)
     slab = moved[moved[:, 2] > 0.83]
 
     (change,) = _associate([_before(whole)], [_after(slab)])

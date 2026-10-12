@@ -3,11 +3,12 @@
 Two objects of one scene are registered to tell whether they are the same
 object seen before and after a move. Objects stand upright in the z-up room
 frame, so the starts are a global feature match (FPFH and RANSAC) and a
-ring of turns about the vertical axis around the centroid shift. Each is
-refined by trimmed ICP and the best fit wins, preferring an upright pose
-and a small rotation among equal fits. A feature match cannot tell a shape
-from its flip about a horizontal axis when the shape has that symmetry, and
-nor can the fitness, hence the preference.
+ring of turns about the vertical axis, put on the other object by its
+centroid, its top, or its bottom. Each is refined by trimmed ICP and the
+best fit wins, preferring an upright pose and a small rotation among equal
+fits. A feature match cannot tell a shape from its flip about a horizontal
+axis when the shape has that symmetry, and nor can the fitness, hence the
+preference.
 
 Importing this module does not load open3d.
 """
@@ -54,7 +55,7 @@ class RegistrationConfig:
             edges for the RANSAC to keep a sample, in ``(0, 1]``.
         icp: Settings of the refinement.
         yaw_starts: Turns about the vertical axis, evenly spaced from 0, that
-            start an ICP around the centroid shift, at least 1.
+            start an ICP at each vertical alignment, at least 1.
         max_tilt_deg: Angle between the object's up axis before and after
             above which a pose counts as tilted and loses to an upright one
             of equal fit, in ``[0, 180]``.
@@ -311,27 +312,46 @@ def _choose(
     )
 
 
-def _yaw_starts(
+def _starts(
     small: NDArray[np.float64],
     large: NDArray[np.float64],
     count: int,
+    tolerance: float,
 ) -> list[SE3]:
     """Builds the starts that turn the smaller cloud about its centroid.
+
+    Each start turns the smaller cloud about the vertical axis through its
+    centroid and puts its centroid on the larger one's in the horizontal
+    plane. Vertically the centroids, the tops, or the bottoms are aligned, so
+    a partial view of an object, such as its top or its bottom part, starts
+    at the right height.
 
     Args:
         small: ``(N, 3)`` points of the smaller cloud.
         large: ``(M, 3)`` points of the larger cloud.
         count: Number of evenly spaced turns, from 0.
+        tolerance: A vertical shift within this distance of one already
+            listed is dropped.
 
     Returns:
-        The poses that turn the smaller cloud about the vertical axis
-        through its centroid and then put the centroid on the larger one's.
+        The poses, the centroid-aligned ones first and then, for each other
+        vertical shift, the turns in order.
     """
     source_center, target_center = small.mean(axis=0), large.mean(axis=0)
+    heights: list[float] = []
+    for height in (
+        target_center[2],
+        source_center[2] + large[:, 2].max() - small[:, 2].max(),
+        source_center[2] + large[:, 2].min() - small[:, 2].min(),
+    ):
+        if all(abs(height - kept) > tolerance for kept in heights):
+            heights.append(height)
     starts = []
-    for step in range(count):
-        rotation = yaw_rotation(2.0 * math.pi * step / count)
-        starts.append(SE3(rotation, target_center - rotation @ source_center))
+    for height in heights:
+        center = np.array([target_center[0], target_center[1], height])
+        for step in range(count):
+            rotation = yaw_rotation(2.0 * math.pi * step / count)
+            starts.append(SE3(rotation, center - rotation @ source_center))
     return starts
 
 
@@ -382,9 +402,10 @@ def register_objects(
     Both clouds are downsampled and the smaller one is registered onto the
     larger one, so a partial view of an object still fits the whole. The
     pose comes from a feature match refined by trimmed ICP, or from a
-    centroid shift refined the same way, whichever has the higher fitness;
-    fits within ``tie_tolerance`` resolve to the smaller rotation, so a
-    cuboid that only moved does not come out turned by a half turn.
+    centroid, top, or bottom aligned start refined the same way, whichever
+    has the higher fitness; fits within ``tie_tolerance`` resolve to the
+    smaller rotation, so a cuboid that only moved does not come out turned
+    by a half turn.
 
     Args:
         source: Source points of shape ``(N, 3)``.
@@ -412,7 +433,9 @@ def register_objects(
     small, large = clouds[::-1] if swapped else clouds
     small_points = np.asarray(small.points)
     index = TargetIndex(np.asarray(large.points))
-    starts = _yaw_starts(small_points, index.points, config.yaw_starts)
+    starts = _starts(
+        small_points, index.points, config.yaw_starts, config.inlier_distance
+    )
     pose = _feature_match(small, large, config)
     if pose is not None:
         starts.append(pose)

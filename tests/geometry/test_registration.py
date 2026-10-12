@@ -236,3 +236,38 @@ def test_the_package_exports_the_registration_names() -> None:
         "register_objects",
         "rotation_angle_deg",
     } <= set(geometry.__all__)
+
+
+@pytest.mark.parametrize("seed", range(4))
+@pytest.mark.parametrize("cut", [0.80, 0.83, 0.85])
+def test_a_top_slab_registers_onto_the_whole_object(
+    cut: float, seed: int
+) -> None:
+    whole = chair(seed=seed + 1)
+    moved = chair(x=0.5, seed=seed + 100)
+    slab = moved[moved[:, 2] > cut]
+
+    result = register_objects(whole, slab)
+
+    assert result.succeeded
+    assert rotation_angle_deg(result.transform.rotation) < 5.0
+    assert result.transform.translation == pytest.approx(
+        [0.5, 0.0, 0.0], abs=0.02
+    )
+
+
+@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("cut", [0.3, 0.45])
+def test_a_bottom_part_registers_onto_the_whole_object(
+    cut: float, seed: int
+) -> None:
+    whole = chair(seed=seed + 1)
+    moved = chair(x=0.5, yaw_deg=40.0, seed=seed + 100)
+    part = moved[moved[:, 2] < cut]
+
+    result = register_objects(whole, part)
+
+    assert result.succeeded
+    assert rotation_angle_deg(result.transform.rotation) == pytest.approx(
+        40.0, abs=5.0
+    )
