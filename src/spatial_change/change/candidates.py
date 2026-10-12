@@ -21,6 +21,11 @@ from spatial_change.domain import (
 )
 from spatial_change.domain.transforms import as_finite_points
 from spatial_change.geometry import fit_upright_box
+from spatial_change.geometry.voxels import (
+    label_packed_voxels,
+    lookup_keys,
+    voxel_grid,
+)
 from spatial_change.visibility import CrossEvidence, PointEvidence, PointState
 
 
@@ -70,9 +75,6 @@ class CandidateConfig:
 
 
 _DEFAULT_CONFIG = CandidateConfig()
-# Voxels the linear key of the grid can index, as a float to compare spans
-# that are too large for an int64.
-_MAX_VOXELS = 2.0**63
 
 
 @dataclass(frozen=True, eq=False)
@@ -123,80 +125,6 @@ class ChangeCandidates:
     appeared: tuple[Candidate, ...]
 
 
-def _forward_offsets(radius: int) -> NDArray[np.int64]:
-    """Lists the neighbour offsets that come after zero in key order.
-
-    Args:
-        radius: Largest absolute offset per axis.
-
-    Returns:
-        Array of shape ``(((2r + 1)^3 - 1) / 2, 3)``: one offset of every
-        opposite pair, so each neighbouring pair is visited once.
-    """
-    span = np.arange(-radius, radius + 1)
-    grid = np.stack(np.meshgrid(span, span, span, indexing="ij"), axis=-1)
-    return grid.reshape(-1, 3)[(2 * radius + 1) ** 3 // 2 + 1 :]
-
-
-def _lookup(
-    packed: NDArray[np.int64], keys: ArrayLike
-) -> tuple[NDArray[np.intp], NDArray[np.bool_]]:
-    """Finds linear voxel keys among the occupied ones.
-
-    Args:
-        packed: Sorted unique linear voxel keys, shape ``(V,)``, at least
-            one.
-        keys: Linear keys to find, shape ``(K,)``.
-
-    Returns:
-        The rows of ``packed`` and a mask of shape ``(K,)``. A row holds its
-        key where the mask is true; elsewhere it is only a valid index.
-    """
-    slots = np.minimum(np.searchsorted(packed, keys), len(packed) - 1)
-    return slots, packed[slots] == keys
-
-
-def _label_voxels(
-    packed: NDArray[np.int64], dims: tuple[int, ...], radius: int
-) -> NDArray[np.int64]:
-    """Labels occupied voxels by connected component.
-
-    Every neighbouring pair is found by a binary search of the shifted
-    key. The components then grow by hooking each edge's roots onto the
-    smaller one and halving the trees by pointer jumping until no edge
-    joins two trees.
-
-    Args:
-        packed: Sorted unique linear voxel keys, shape ``(V,)``.
-        dims: Grid size the linear keys are packed with.
-        radius: Neighbourhood radius in voxels.
-
-    Returns:
-        For every voxel the row of the first voxel of its component.
-    """
-    strides = np.array([dims[1] * dims[2], dims[2], 1], dtype=np.int64)
-    heads, tails = [], []
-    for offset in _forward_offsets(radius):
-        slot, linked = _lookup(packed, packed + offset @ strides)
-        heads.append(np.flatnonzero(linked))
-        tails.append(slot[linked])
-    head, tail = np.concatenate(heads), np.concatenate(tails)
-    parent = np.arange(len(packed))
-    while head.size:
-        root_head, root_tail = parent[head], parent[tail]
-        lower = np.minimum(root_head, root_tail)
-        np.minimum.at(parent, root_head, lower)
-        np.minimum.at(parent, root_tail, lower)
-        while True:
-            jumped = parent[parent]
-            if np.array_equal(jumped, parent):
-                break
-            parent = jumped
-        open_edges = parent[head] != parent[tail]
-        head, tail = head[open_edges], tail[open_edges]
-    return parent
-
-
 def _points_per_component(
     keys: NDArray[np.int64],
     dims: tuple[int, ...],
@@ -219,7 +147,7 @@ def _points_per_component(
     """
     inside = np.all((keys >= 0) & (keys < dims), axis=1)
     linear = np.ravel_multi_index(keys[inside].T, dims)
-    slot, occupied = _lookup(packed, linear)
+    slot, occupied = lookup_keys(packed, linear)
     return np.bincount(component_of_voxel[slot[occupied]], minlength=components)
 
 
@@ -265,22 +193,15 @@ def extract_candidates(
     radius = config.link_radius
     with np.errstate(over="ignore", invalid="ignore"):
         cells = np.floor(cloud / config.voxel_size)
-        changed_cells = cells[changed]
-        origin = changed_cells.min(axis=0) - radius
-        spans = changed_cells.max(axis=0) + radius - origin + 1
-    # Negated so that a NaN span, which no comparison accepts, is rejected.
-    if not math.prod(spans.tolist()) < _MAX_VOXELS:
-        raise ValueError(
-            "the CHANGED points span too many voxels; increase voxel_size"
-        )
-    dims = tuple(spans.astype(np.int64).tolist())
+    low, spans, dims = voxel_grid(cells[changed], radius)
+    origin = np.array(low)
     # Points off the grid are clipped to the voxel just outside it, so the
     # cast to int64 never overflows.
-    keys = np.clip(cells - origin, -1.0, spans).astype(np.int64)
+    keys = np.clip(cells - origin, -1.0, np.array(spans)).astype(np.int64)
     packed, voxel_of_point = np.unique(
         np.ravel_multi_index(keys[changed].T, dims), return_inverse=True
     )
-    roots = _label_voxels(packed, dims, radius)
+    roots = label_packed_voxels(packed, dims, radius)
     firsts, component_of_voxel = np.unique(roots, return_inverse=True)
     component_of_point = component_of_voxel[voxel_of_point]
     count = len(firsts)

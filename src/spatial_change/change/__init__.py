@@ -1,4 +1,4 @@
-"""Candidate change regions from visibility evidence.
+"""Candidate change regions from visibility evidence, lifted to objects.
 
 Importing the package does not load torch, open3d, or cv2.
 """
@@ -17,6 +17,12 @@ from spatial_change.change.candidates import (
     extract_candidates,
     find_candidates,
 )
+from spatial_change.change.lifting import (
+    LiftConfig,
+    LiftedObjects,
+    lift_candidates,
+    lift_change_candidates,
+)
 
 __all__ = [
     "AppearanceConfig",
@@ -24,9 +30,13 @@ __all__ = [
     "CandidateConfig",
     "ChangeCandidates",
     "CrossAppearance",
+    "LiftConfig",
+    "LiftedObjects",
     "PointAppearance",
     "compare_appearance",
     "extract_candidates",
     "find_candidates",
     "fuse_appearance",
+    "lift_candidates",
+    "lift_change_candidates",
 ]

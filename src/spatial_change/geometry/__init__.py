@@ -20,10 +20,14 @@ from spatial_change.geometry.icp import (
     trimmed_icp,
 )
 from spatial_change.geometry.projection import (
+    VisiblePoints,
     in_image,
     project,
     unproject_depth,
+    usable_pixels,
+    visible_points,
 )
+from spatial_change.geometry.voxels import label_voxel_cells, voxel_cells
 
 __all__ = [
     "FloorConfig",
@@ -31,14 +35,19 @@ __all__ = [
     "IcpConfig",
     "IcpResult",
     "TargetIndex",
+    "VisiblePoints",
     "camera_up_hint",
     "fit_floor",
     "fit_upright_box",
     "floor_frame",
     "in_image",
+    "label_voxel_cells",
     "project",
     "trimmed_icp",
     "umeyama",
     "unproject_depth",
+    "usable_pixels",
+    "visible_points",
+    "voxel_cells",
     "yaw_rotation",
 ]

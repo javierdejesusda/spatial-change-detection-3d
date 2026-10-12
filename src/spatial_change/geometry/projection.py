@@ -5,10 +5,12 @@ x right, y down, z forward, pixel centers at integer coordinates, and
 ``world_from_camera`` poses that map camera to world coordinates.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from spatial_change.domain import SE3, Intrinsics
+from spatial_change.domain import SE3, Frame, Intrinsics
 from spatial_change.domain.transforms import check_array
 
 DEFAULT_MIN_CONFIDENCE = 0.1
@@ -137,3 +139,88 @@ def unproject_depth(
         axis=1,
     )
     return world_from_camera.apply(points_camera)
+
+
+def usable_pixels(frame: Frame, min_confidence: float) -> NDArray[np.bool_]:
+    """Marks the pixels of a frame that can give a view of a surface.
+
+    A frame without a confidence map counts every pixel as fully confident.
+
+    Args:
+        frame: A frame with depth.
+        min_confidence: Minimum confidence, inclusive.
+
+    Returns:
+        ``(H, W)`` mask of the pixels with a valid depth and enough
+        confidence.
+
+    Raises:
+        ValueError: If the frame has no depth map.
+    """
+    if frame.depth is None:
+        raise ValueError("frame has no depth map")
+    confidence = (
+        np.ones_like(frame.depth)
+        if frame.confidence is None
+        else frame.confidence
+    )
+    return confident_pixels(frame.depth, confidence, min_confidence)
+
+
+@dataclass(frozen=True, eq=False)
+class VisiblePoints:
+    """The points a frame sees and where.
+
+    Attributes:
+        indices: Rows of the seen points in the input, ascending, shape
+            ``(M,)``.
+        uv: Their pixel coordinates, shape ``(M, 2)``, float64.
+        pixels: The pixels they fall on, ``np.rint`` of ``uv`` as
+            ``(column, row)``, shape ``(M, 2)``, intp.
+    """
+
+    indices: NDArray[np.intp]
+    uv: NDArray[np.float64]
+    pixels: NDArray[np.intp]
+
+
+def visible_points(
+    points: NDArray[np.float64],
+    frame: Frame,
+    usable: NDArray[np.bool_],
+    abs_tolerance: float,
+    rel_tolerance: float,
+) -> VisiblePoints:
+    """Finds the points a frame sees on its depth surface.
+
+    A point is seen when it projects into the image, lands on a usable
+    pixel, and its depth ``z`` matches the frame's depth ``d`` there:
+    ``|z - d| <= abs_tolerance + rel_tolerance * z``. A point hidden behind
+    a nearer surface, or floating in front of a farther one, is not seen.
+
+    Args:
+        points: World points of shape ``(N, 3)``.
+        frame: The frame, with depth.
+        usable: The frame's usable pixels, from ``usable_pixels``.
+        abs_tolerance: Depth tolerance at zero depth.
+        rel_tolerance: Extra tolerance per unit of depth.
+
+    Returns:
+        The seen points, their coordinates, and their pixels.
+
+    Raises:
+        ValueError: If the frame has no depth map or ``points`` does not
+            have shape ``(N, 3)``.
+    """
+    if frame.depth is None:
+        raise ValueError("frame has no depth map")
+    uv, z = project(points, frame.intrinsics, frame.world_from_camera)
+    inside = np.flatnonzero(in_image(uv, z, frame.intrinsics))
+    uv, z = uv[inside], z[inside]
+    pixels = np.rint(uv).astype(np.intp)
+    rows, cols = pixels[:, 1], pixels[:, 0]
+    depth_error = np.abs(z - frame.depth[rows, cols])
+    seen = usable[rows, cols] & (
+        depth_error <= abs_tolerance + rel_tolerance * z
+    )
+    return VisiblePoints(inside[seen], uv[seen], pixels[seen])

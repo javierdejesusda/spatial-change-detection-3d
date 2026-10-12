@@ -19,11 +19,11 @@ from numpy.typing import NDArray
 
 from spatial_change.domain import Epoch, EpochReconstruction, Frame
 from spatial_change.domain.transforms import as_finite_points
+from spatial_change.geometry import voxel_cells
 from spatial_change.geometry.projection import (
     DEFAULT_MIN_CONFIDENCE,
-    confident_pixels,
-    in_image,
-    project,
+    usable_pixels,
+    visible_points,
 )
 from spatial_change.perception.sampling import sample_features
 from spatial_change.ports import FeatureEncoder
@@ -159,7 +159,7 @@ def _voxelize(points: NDArray[np.float64], voxel_size: float) -> _Voxels:
     Returns:
         The voxels, with no views collected yet.
     """
-    cells = np.floor(points / voxel_size).astype(np.int64)
+    cells = voxel_cells(points, voxel_size)
     occupied, inverse = np.unique(cells, axis=0, return_inverse=True)
     point_voxel = inverse.reshape(-1).astype(np.intp)
     count = len(occupied)
@@ -177,28 +177,6 @@ def _voxelize(points: NDArray[np.float64], voxel_size: float) -> _Voxels:
         centers,
         {epoch: _Views(None, np.zeros(count, np.int32)) for epoch in Epoch},
     )
-
-
-def _usable_pixels(frame: Frame, config: AppearanceConfig) -> NDArray[np.bool_]:
-    """Marks the pixels that can give a view.
-
-    A frame without a confidence map counts every pixel as fully confident.
-
-    Args:
-        frame: A frame with depth.
-        config: Supplies ``min_confidence``.
-
-    Returns:
-        ``(H, W)`` mask of the pixels with a valid depth and enough
-        confidence.
-    """
-    assert frame.depth is not None
-    confidence = (
-        np.ones_like(frame.depth)
-        if frame.confidence is None
-        else frame.confidence
-    )
-    return confident_pixels(frame.depth, confidence, config.min_confidence)
 
 
 def _add_views(
@@ -221,24 +199,18 @@ def _add_views(
         views: The views to add to.
         centers: Voxel centers of shape ``(V, 3)``.
         frame: The frame, with depth.
-        usable: The frame's usable pixels, from ``_usable_pixels``.
+        usable: The frame's usable pixels, from ``usable_pixels``.
         features: The frame's patch features.
         patch_size: Side of a feature patch in pixels.
         config: Supplies the depth tolerances.
     """
-    assert frame.depth is not None
-    uv, z = project(centers, frame.intrinsics, frame.world_from_camera)
-    visible = np.flatnonzero(in_image(uv, z, frame.intrinsics))
-    uv, z = uv[visible], z[visible]
-    pixels = np.rint(uv).astype(np.intp)
-    rows, cols = pixels[:, 1], pixels[:, 0]
-    depth_error = np.abs(z - frame.depth[rows, cols])
-    tolerance = config.abs_tolerance + config.rel_tolerance * z
-    seen = usable[rows, cols] & (depth_error <= tolerance)
-    voxels = visible[seen]
+    seen = visible_points(
+        centers, frame, usable, config.abs_tolerance, config.rel_tolerance
+    )
+    voxels = seen.indices
     if voxels.size == 0:
         return
-    sampled = sample_features(features, uv[seen], patch_size)
+    sampled = sample_features(features, seen.uv, patch_size)
     norms = np.sqrt(np.einsum("vc,vc->v", sampled, sampled))
     sampled /= np.maximum(norms, _MIN_NORM)[:, None]
     if views.total is None:
@@ -346,7 +318,7 @@ def compare_appearance(
             if frame.image is None or frame.depth is None:
                 continue
             features = encoder.encode(frame.image)
-            usable = _usable_pixels(frame, config)
+            usable = usable_pixels(frame, config.min_confidence)
             for target in voxels.values():
                 _add_views(
                     target.views[frame.epoch],

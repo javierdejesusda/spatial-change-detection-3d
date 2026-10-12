@@ -1,11 +1,20 @@
+import dataclasses
+
 import numpy as np
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from rotations import random_rotation
 
-from spatial_change.domain import SE3, Intrinsics
-from spatial_change.geometry import in_image, project, unproject_depth
+from spatial_change.domain import SE3, Epoch, Frame, Intrinsics
+from spatial_change.geometry import (
+    VisiblePoints,
+    in_image,
+    project,
+    unproject_depth,
+    usable_pixels,
+    visible_points,
+)
 
 _INTRINSICS = Intrinsics(
     fx=40.0, fy=45.0, cx=15.5, cy=11.5, width=32, height=24
@@ -151,3 +160,128 @@ def test_unproject_rejects_wrong_dtypes() -> None:
             SE3.identity(),
             mask=np.ones((24, 32), np.uint8),
         )
+
+
+def _wall_frame(
+    depth_value: float = 2.0,
+    confidence: np.ndarray | None = None,
+    depth: np.ndarray | None = None,
+) -> Frame:
+    if depth is None:
+        depth = np.full((24, 32), depth_value, np.float32)
+    return Frame(
+        epoch=Epoch.BEFORE,
+        index=0,
+        timestamp_s=0.0,
+        intrinsics=_INTRINSICS,
+        world_from_camera=SE3.identity(),
+        depth=depth,
+        confidence=confidence,
+    )
+
+
+def test_usable_pixels_without_confidence_need_only_a_valid_depth() -> None:
+    depth = np.full((24, 32), 2.0, np.float32)
+    depth[0, 0] = 0.0
+    depth[0, 1] = np.nan
+    depth[0, 2] = -1.0
+
+    usable = usable_pixels(_wall_frame(depth=depth), 0.9)
+
+    assert usable.dtype == np.bool_
+    assert not usable[0, :3].any()
+    assert usable.sum() == 24 * 32 - 3
+
+
+def test_usable_pixels_apply_the_confidence_threshold_inclusively() -> None:
+    confidence = np.full((24, 32), 0.5, np.float32)
+    confidence[1, 1] = 0.49
+    confidence[2, 2] = 0.51
+
+    usable = usable_pixels(_wall_frame(confidence=confidence), 0.5)
+
+    assert not usable[1, 1]
+    assert usable[2, 2] and usable[0, 0]
+
+
+def test_usable_pixels_need_a_depth_map() -> None:
+    frame = dataclasses.replace(_wall_frame(), depth=None)
+
+    with pytest.raises(ValueError, match="depth"):
+        usable_pixels(frame, 0.1)
+
+
+def _visible(
+    points: list[list[float]],
+    frame: Frame | None = None,
+    abs_tolerance: float = 0.05,
+    rel_tolerance: float = 0.02,
+) -> VisiblePoints:
+    frame = frame or _wall_frame()
+    usable = usable_pixels(frame, 0.1)
+    return visible_points(
+        np.array(points, np.float64).reshape(-1, 3),
+        frame,
+        usable,
+        abs_tolerance,
+        rel_tolerance,
+    )
+
+
+def test_a_point_on_the_depth_surface_is_visible_with_its_pixel() -> None:
+    result = _visible([[0.0, 0.0, 2.0], [0.5, -0.25, 2.0]])
+
+    np.testing.assert_array_equal(result.indices, [0, 1])
+    np.testing.assert_allclose(
+        result.uv, [[15.5, 11.5], [15.5 + 40.0 * 0.25, 11.5 - 45.0 * 0.125]]
+    )
+    np.testing.assert_array_equal(result.pixels, [[16, 12], [26, 6]])
+    assert result.pixels.dtype == np.intp
+
+
+def test_points_off_the_surface_are_not_visible() -> None:
+    inside = [0.0, 0.0, 2.0]
+    behind_the_wall = [0.0, 0.0, 3.0]
+    in_front_of_the_wall = [0.0, 0.0, 1.0]
+
+    result = _visible([behind_the_wall, inside, in_front_of_the_wall])
+
+    np.testing.assert_array_equal(result.indices, [1])
+
+
+def test_points_behind_the_camera_or_outside_the_image_are_not_visible() -> (
+    None
+):
+    result = _visible([[0.0, 0.0, -2.0], [9.0, 0.0, 2.0], [0.0, 0.0, 2.0]])
+
+    np.testing.assert_array_equal(result.indices, [2])
+
+
+def test_the_depth_tolerance_is_absolute_plus_relative() -> None:
+    # |z - 2| <= 0.125 + 0.5 * z holds up to z = 4.25.
+    just_in = [0.0, 0.0, 4.25 - 1e-3]
+    just_out = [0.0, 0.0, 4.25 + 1e-3]
+
+    result = _visible(
+        [just_out, just_in], abs_tolerance=0.125, rel_tolerance=0.5
+    )
+
+    np.testing.assert_array_equal(result.indices, [1])
+
+
+def test_points_on_unusable_pixels_are_not_visible() -> None:
+    confidence = np.ones((24, 32), np.float32)
+    confidence[12, 16] = 0.0
+    frame = _wall_frame(confidence=confidence)
+
+    result = _visible([[0.0, 0.0, 2.0], [0.5, 0.0, 2.0]], frame)
+
+    np.testing.assert_array_equal(result.indices, [1])
+
+
+def test_no_points_give_empty_results() -> None:
+    result = _visible([])
+
+    assert result.indices.shape == (0,)
+    assert result.uv.shape == (0, 2)
+    assert result.pixels.shape == (0, 2)
