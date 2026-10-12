@@ -11,11 +11,15 @@ def test_package_exports_the_public_names() -> None:
     assert set(pipeline.__all__) == {
         "STAGES",
         "Models",
+        "OutputFiles",
+        "PipelineResult",
         "ProgressCallback",
         "RunConfig",
         "StageEvent",
         "default_models",
         "format_event",
+        "run_frames",
+        "run_videos",
     }
     for name in pipeline.__all__:
         assert hasattr(pipeline, name)
