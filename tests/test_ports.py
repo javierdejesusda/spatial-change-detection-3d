@@ -6,14 +6,18 @@ from numpy.typing import NDArray
 
 from spatial_change.domain import SE3, Intrinsics
 from spatial_change.ports import (
+    ChangeCrops,
+    Describer,
     FeatureEncoder,
     Labeler,
     MaskSegmenter,
     ReconstructionResult,
     Reconstructor,
     Unloadable,
+    VisionLanguageModel,
     check_vocabulary,
 )
+from spatial_change.semantics.relations import ChangeFact
 
 _INTRINSICS = Intrinsics(fx=1.0, fy=1.0, cx=1.5, cy=1.0, width=4, height=3)
 
@@ -130,3 +134,75 @@ def test_check_vocabulary_rejects_an_invalid_vocabulary(
 
 def test_check_vocabulary_accepts_unique_names() -> None:
     check_vocabulary(["red", "green"])
+
+
+class FakeDescriber:
+    def describe(self, fact: ChangeFact, crops: ChangeCrops) -> str:
+        return fact.label
+
+    def unload(self) -> None:
+        pass
+
+
+class FakeVisionLanguageModel:
+    def generate(self, images: Sequence[NDArray[np.uint8]], prompt: str) -> str:
+        return prompt
+
+    def unload(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    ("fake", "port"),
+    [
+        (FakeDescriber(), Describer),
+        (FakeDescriber(), Unloadable),
+        (FakeVisionLanguageModel(), VisionLanguageModel),
+        (FakeVisionLanguageModel(), Unloadable),
+    ],
+)
+def test_describer_fakes_satisfy_ports(fake: object, port: type) -> None:
+    assert isinstance(fake, port)
+
+
+def test_a_describer_is_not_a_vision_language_model() -> None:
+    assert not isinstance(FakeDescriber(), VisionLanguageModel)
+
+
+def _crop(height: int = 4, width: int = 5) -> NDArray[np.uint8]:
+    return np.zeros((height, width, 3), np.uint8)
+
+
+def test_change_crops_default_to_no_crops() -> None:
+    crops = ChangeCrops()
+
+    assert crops.before == ()
+    assert crops.after == ()
+
+
+def test_change_crops_keep_the_crops_in_order() -> None:
+    first, second = _crop(2, 3), _crop(6, 7)
+
+    crops = ChangeCrops(before=(first, second), after=(second,))
+
+    assert crops.before[0] is first
+    assert crops.before[1] is second
+    assert crops.after[0] is second
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        np.zeros((4, 5), np.uint8),
+        np.zeros((4, 5, 4), np.uint8),
+        np.zeros((4, 5, 3), np.float32),
+        np.zeros((0, 5, 3), np.uint8),
+        np.zeros((4, 0, 3), np.uint8),
+    ],
+)
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_change_crops_reject_invalid_images(
+    bad: NDArray[np.uint8], side: str
+) -> None:
+    with pytest.raises(ValueError, match=side):
+        ChangeCrops(**{side: (bad,)})

@@ -14,6 +14,7 @@ def test_package_exports_the_public_names() -> None:
         "FakeFeatureEncoder",
         "FakeLabeler",
         "FakeMaskSegmenter",
+        "FakeVlm",
         "SAM21_MODEL_ID",
         "SAM3_MODEL_ID",
         "SamConfig",

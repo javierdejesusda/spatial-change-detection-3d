@@ -6,8 +6,14 @@ from spatial_change.perception.fake import (
     FakeFeatureEncoder,
     FakeLabeler,
     FakeMaskSegmenter,
+    FakeVlm,
 )
-from spatial_change.ports import FeatureEncoder, Labeler, MaskSegmenter
+from spatial_change.ports import (
+    FeatureEncoder,
+    Labeler,
+    MaskSegmenter,
+    VisionLanguageModel,
+)
 
 
 def _image(height: int, width: int, rgb: tuple[int, int, int]) -> NDArray:
@@ -332,3 +338,36 @@ def test_labeler_unloads_are_counted() -> None:
     labeler.unload()
 
     assert labeler.unload_count == 2
+
+
+def test_fake_vlm_satisfies_the_port() -> None:
+    assert isinstance(FakeVlm(["x"]), VisionLanguageModel)
+
+
+def test_fake_vlm_replies_in_order_and_records_the_calls() -> None:
+    vlm = FakeVlm(["first", "second"])
+    image = _image(4, 5, (1, 2, 3))
+
+    assert vlm.generate([image], "p1") == "first"
+    assert vlm.generate([], "p2") == "second"
+
+    assert [prompt for _, prompt in vlm.calls] == ["p1", "p2"]
+    assert vlm.calls[0][0][0] is image
+    assert vlm.calls[1][0] == ()
+
+
+def test_fake_vlm_with_no_replies_left_raises() -> None:
+    vlm = FakeVlm(["only"])
+    vlm.generate([], "p")
+
+    with pytest.raises(RuntimeError, match="no scripted reply"):
+        vlm.generate([], "p")
+
+
+def test_fake_vlm_counts_unloads() -> None:
+    vlm = FakeVlm([])
+
+    vlm.unload()
+    vlm.unload()
+
+    assert vlm.unload_count == 2

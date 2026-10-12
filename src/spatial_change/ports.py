@@ -12,14 +12,20 @@ uint8 RGB, pixel coordinates use the OpenCV convention with pixel centers
 at integer coordinates, and poses are ``world_from_camera``.
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
 
 from spatial_change.domain import SE3, Intrinsics
+from spatial_change.domain.transforms import check_array
+
+if TYPE_CHECKING:
+    from spatial_change.semantics.relations import ChangeFact
 
 
 @dataclass(frozen=True, eq=False)
@@ -59,6 +65,36 @@ class ReconstructionResult:
         }
         if len(lengths) != 1:
             raise ValueError("all per-view lists must have the same length")
+
+
+@dataclass(frozen=True, eq=False)
+class ChangeCrops:
+    """Image crops of one changed object, for a describer.
+
+    Either side may be empty: an added object has no ``before`` crops and a
+    removed one has no ``after`` crops.
+
+    Attributes:
+        before: ``(h, w, 3)`` uint8 RGB crops of the object in the
+            ``before`` capture, each of any size.
+        after: Crops of the object in the ``after`` capture, as above.
+
+    Raises:
+        ValueError: If a crop is not a non-empty RGB uint8 array.
+    """
+
+    before: tuple[NDArray[np.uint8], ...] = ()
+    after: tuple[NDArray[np.uint8], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Checks every crop."""
+        for side in ("before", "after"):
+            for crop in getattr(self, side):
+                check_array(crop, (None, None, 3), np.uint8, side)
+                if crop.shape[0] < 1 or crop.shape[1] < 1:
+                    raise ValueError(
+                        f"{side} crops must not be empty, got {crop.shape}"
+                    )
 
 
 @runtime_checkable
@@ -178,5 +214,41 @@ class Labeler(Unloadable, Protocol):
         Returns:
             One ``(label, score)`` per crop, in input order, where ``label``
             is an entry of ``vocabulary`` and ``score`` is in [0, 1].
+        """
+        ...
+
+
+@runtime_checkable
+class VisionLanguageModel(Unloadable, Protocol):
+    """Answers a text prompt about a few images."""
+
+    def generate(self, images: Sequence[NDArray[np.uint8]], prompt: str) -> str:
+        """Generates a text reply.
+
+        Args:
+            images: ``(h, w, 3)`` uint8 RGB images, each of any size; may
+                be empty.
+            prompt: The instruction.
+
+        Returns:
+            The reply text, stripped of surrounding whitespace.
+        """
+        ...
+
+
+@runtime_checkable
+class Describer(Unloadable, Protocol):
+    """Turns a change fact and its crops into one sentence."""
+
+    def describe(self, fact: ChangeFact, crops: ChangeCrops) -> str:
+        """Describes one change.
+
+        Args:
+            fact: Structured spatial facts about the change; the sentence
+                must not contradict them.
+            crops: Before and after crops of the object, possibly empty.
+
+        Returns:
+            One non-empty sentence.
         """
         ...

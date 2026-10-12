@@ -14,6 +14,7 @@ from spatial_change.perception.fake import (
     FakeFeatureEncoder,
     FakeLabeler,
     FakeMaskSegmenter,
+    FakeVlm,
 )
 from spatial_change.perception.sam import (
     SAM3_MODEL_ID,
@@ -37,6 +38,7 @@ __all__ = [
     "FakeFeatureEncoder",
     "FakeLabeler",
     "FakeMaskSegmenter",
+    "FakeVlm",
     "SAM21_MODEL_ID",
     "SAM3_MODEL_ID",
     "SIGLIP2_MODEL_ID",

@@ -1,9 +1,14 @@
 """Spatial semantics: labels, landmarks, facts, and sentences about changes.
 
-Importing the package does not load torch or transformers; the labeler that
-the functions take does.
+Importing the package does not load torch or transformers; the labeler and
+the vision-language model that the functions take do.
 """
 
+from spatial_change.semantics.describers import (
+    LocalVlmConfig,
+    LocalVlmDescriber,
+    TemplateDescriber,
+)
 from spatial_change.semantics.labeling import LabelConfig, label_instances
 from spatial_change.semantics.landmarks import (
     LandmarkConfig,
@@ -48,8 +53,11 @@ __all__ = [
     "Landmark",
     "LandmarkConfig",
     "LandmarkRelation",
+    "LocalVlmConfig",
+    "LocalVlmDescriber",
     "RelationConfig",
     "STRUCTURE",
+    "TemplateDescriber",
     "ValidationResult",
     "build_change_fact",
     "describe_direction",

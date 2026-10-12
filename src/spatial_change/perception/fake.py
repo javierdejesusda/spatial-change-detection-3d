@@ -214,3 +214,46 @@ class FakeLabeler:
     def unload(self) -> None:
         """Counts the call; the fake holds no resources."""
         self.unload_count += 1
+
+
+class FakeVlm:
+    """A vision-language model that returns scripted replies.
+
+    Attributes:
+        calls: The ``(images, prompt)`` of each ``generate`` call, in order;
+            ``images`` is a tuple of the arrays passed in.
+        unload_count: How many times ``unload`` was called.
+    """
+
+    def __init__(self, replies: Sequence[str]) -> None:
+        """Creates the fake model.
+
+        Args:
+            replies: The replies, returned one per ``generate`` call in
+                order.
+        """
+        self._replies = list(replies)
+        self.calls: list[tuple[tuple[NDArray[np.uint8], ...], str]] = []
+        self.unload_count = 0
+
+    def generate(self, images: Sequence[NDArray[np.uint8]], prompt: str) -> str:
+        """Records the call and returns the next scripted reply.
+
+        Args:
+            images: The images, recorded as given.
+            prompt: The prompt, recorded as given.
+
+        Returns:
+            The next reply.
+
+        Raises:
+            RuntimeError: If every scripted reply was already used.
+        """
+        self.calls.append((tuple(images), prompt))
+        if len(self.calls) > len(self._replies):
+            raise RuntimeError("no scripted reply left")
+        return self._replies[len(self.calls) - 1]
+
+    def unload(self) -> None:
+        """Counts the call; the fake holds no resources."""
+        self.unload_count += 1
