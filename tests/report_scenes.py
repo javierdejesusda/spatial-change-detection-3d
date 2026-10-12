@@ -1,5 +1,9 @@
 """A small hand-built report and clouds for the GLB and report tests."""
 
+import json
+import re
+from typing import Any
+
 import numpy as np
 
 from spatial_change.domain import (
@@ -12,6 +16,7 @@ from spatial_change.domain import (
     OrientedBox,
     UnobservedRegion,
 )
+from spatial_change.reporting import ChangeCrops, ReportInputs
 from spatial_change.visualization import ScenePoints
 
 EVIDENCE = EvidenceCounts(consistent=5, free=3, occluded=1, unobserved=0)
@@ -93,3 +98,31 @@ def cloud(count: int, seed: int) -> ScenePoints:
     points = rng.uniform((0, 0, 0), (6, 5, 2.5), size=(count, 3))
     colors = rng.integers(0, 256, size=(count, 3), dtype=np.uint8)
     return ScenePoints(points, colors)
+
+
+def inputs(
+    report: ChangeReport | None = None,
+    summary: str = "Two captures of a living room.",
+    crops: dict[str, ChangeCrops] | None = None,
+    count: int = 300,
+) -> ReportInputs:
+    """Builds report inputs with random clouds for both epochs."""
+    return ReportInputs(
+        report=report or one_of_each_report(),
+        summary=summary,
+        crops=crops or {},
+        points={Epoch.BEFORE: cloud(count, 0), Epoch.AFTER: cloud(count, 1)},
+    )
+
+
+def scene_data(page: str) -> dict[str, Any]:
+    """Parses the JSON data block of a rendered page."""
+    match = re.search(r'id="scene-data">(.*?)</script>', page, re.S)
+    assert match is not None
+    parsed: dict[str, Any] = json.loads(match.group(1))
+    return parsed
+
+
+def cards(page: str) -> list[str]:
+    """Returns the markup of each change card of a rendered page."""
+    return re.findall(r'<article class="card"[^>]*>.*?</article>', page, re.S)

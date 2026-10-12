@@ -25,7 +25,9 @@ def test_package_exports_the_public_names() -> None:
         assert hasattr(visualization, name)
 
 
-@pytest.mark.parametrize("package", ["spatial_change.visualization"])
+@pytest.mark.parametrize(
+    "package", ["spatial_change.visualization", "spatial_change.reporting"]
+)
 def test_importing_a_package_loads_no_heavy_library(package: str) -> None:
     code = (
         "import sys\n"
