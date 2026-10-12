@@ -17,6 +17,7 @@ dependencies = [
     "pi3",
     "pillow>=10",
     "pydantic>=2.9",
+    "rerun-sdk>=0.38.1,<0.39",
     "transformers>=5.19.0",
 ]
 
