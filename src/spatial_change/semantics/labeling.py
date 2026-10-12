@@ -21,7 +21,7 @@ from spatial_change.domain import EpochReconstruction, ObjectInstance
 from spatial_change.geometry.views import (
     UsableFrame,
     ViewConfig,
-    pixel_box,
+    crop_view,
     select_views,
     usable_frames,
 )
@@ -89,26 +89,17 @@ def _crops(
         The crops in frame order; a view whose crop is smaller than
         ``min_crop_px`` on its shorter side is left out.
     """
-    crops = []
-    views = select_views(points, frames, config.views)
-    for view in views:
-        item = frames[view.position]
-        pixels = view.seen.pixels
-        extent = pixels.max(axis=0) - pixels.min(axis=0) + 1
-        margin = np.maximum(config.margin * extent, config.min_margin_px)
-        x0, y0, x1, y1 = pixel_box(
-            pixels,
-            margin,
-            item.frame.intrinsics.width,
-            item.frame.intrinsics.height,
+    crops = (
+        crop_view(
+            frames[view.position],
+            view,
+            config.margin,
+            config.min_margin_px,
+            config.min_crop_px,
         )
-        crop = item.image[
-            int(np.floor(y0)) : int(np.ceil(y1)) + 1,
-            int(np.floor(x0)) : int(np.ceil(x1)) + 1,
-        ]
-        if min(crop.shape[:2]) >= config.min_crop_px:
-            crops.append(np.ascontiguousarray(crop))
-    return crops
+        for view in select_views(points, frames, config.views)
+    )
+    return [crop for crop in crops if crop is not None]
 
 
 def _fuse(

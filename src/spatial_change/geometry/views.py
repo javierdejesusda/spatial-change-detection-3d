@@ -179,3 +179,41 @@ def pixel_box(
     high = pixels.max(axis=0) + margin
     limit = np.array([width - 1, height - 1])
     return np.concatenate([np.maximum(low, 0.0), np.minimum(high, limit)])
+
+
+def crop_view(
+    item: UsableFrame,
+    view: ObjectView,
+    margin: float,
+    min_margin_px: float,
+    min_crop_px: int,
+) -> NDArray[np.uint8] | None:
+    """Crops the pixels an object covers in one frame, with a margin.
+
+    Args:
+        item: The frame of the view.
+        view: The object's view in that frame.
+        margin: Share of the object's pixel extent added on every side.
+        min_margin_px: Smallest margin in pixels; the margin of a side is
+            the larger of the two.
+        min_crop_px: Smallest accepted length of the crop's shorter side.
+
+    Returns:
+        The ``(h, w, 3)`` crop as a contiguous array, or ``None`` if its
+        shorter side has fewer than ``min_crop_px`` pixels.
+    """
+    pixels = view.seen.pixels
+    extent = pixels.max(axis=0) - pixels.min(axis=0) + 1
+    x0, y0, x1, y1 = pixel_box(
+        pixels,
+        np.maximum(margin * extent, min_margin_px),
+        item.frame.intrinsics.width,
+        item.frame.intrinsics.height,
+    )
+    crop = item.image[
+        int(np.floor(y0)) : int(np.ceil(y1)) + 1,
+        int(np.floor(x0)) : int(np.ceil(x1)) + 1,
+    ]
+    if min(crop.shape[:2]) < min_crop_px:
+        return None
+    return np.ascontiguousarray(crop)

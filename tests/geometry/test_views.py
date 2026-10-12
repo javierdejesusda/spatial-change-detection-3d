@@ -10,7 +10,10 @@ from spatial_change.geometry.projection import (
     visible_points,
 )
 from spatial_change.geometry.views import (
+    ObjectView,
+    UsableFrame,
     ViewConfig,
+    crop_view,
     pixel_box,
     select_views,
     usable_frames,
@@ -178,3 +181,52 @@ def test_view_config_rejects_invalid_values(
 ) -> None:
     with pytest.raises(ValueError):
         ViewConfig(**overrides)  # type: ignore[arg-type]
+
+
+def _first_view() -> tuple[UsableFrame, ObjectView]:
+    scene, points = _scene(ring_poses(4))
+    frames = usable_frames(scene.reconstruction(), 0.1)
+    view = select_views(points, frames, ViewConfig(max_views=1))[0]
+    return frames[view.position], view
+
+
+def test_a_crop_is_the_visible_pixels_with_the_larger_margin_around_them() -> (
+    None
+):
+    item, view = _first_view()
+    pixels = view.seen.pixels
+    extent = pixels.max(axis=0) - pixels.min(axis=0) + 1
+
+    crop = crop_view(item, view, margin=0.1, min_margin_px=4.0, min_crop_px=1)
+
+    assert crop is not None
+    box = pixel_box(
+        pixels,
+        np.maximum(0.1 * extent, 4.0),
+        INTRINSICS.width,
+        INTRINSICS.height,
+    )
+    x0, y0, x1, y1 = box
+    expected = item.image[
+        int(np.floor(y0)) : int(np.ceil(y1)) + 1,
+        int(np.floor(x0)) : int(np.ceil(x1)) + 1,
+    ]
+    np.testing.assert_array_equal(crop, expected)
+    assert crop.flags["C_CONTIGUOUS"]
+
+
+def test_a_crop_with_a_short_side_under_the_minimum_is_none() -> None:
+    item, view = _first_view()
+    crop = crop_view(item, view, margin=0.0, min_margin_px=0.0, min_crop_px=1)
+    assert crop is not None
+
+    assert (
+        crop_view(
+            item,
+            view,
+            margin=0.0,
+            min_margin_px=0.0,
+            min_crop_px=min(crop.shape[:2]) + 1,
+        )
+        is None
+    )
