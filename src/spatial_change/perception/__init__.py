@@ -1,7 +1,8 @@
-"""Dense patch features, promptable object masks, and open-vocabulary labels.
+"""Dense patch features, masks, labels, and vision-language models.
 
 Importing the package does not load torch or transformers; the DINO encoder,
-the SAM segmenter, and the SigLIP labeler import them when their model loads.
+the SAM segmenter, the SigLIP labeler, and the Qwen model import them when
+their model loads.
 """
 
 from spatial_change.perception.dino import (
@@ -15,6 +16,11 @@ from spatial_change.perception.fake import (
     FakeLabeler,
     FakeMaskSegmenter,
     FakeVlm,
+)
+from spatial_change.perception.qwen import (
+    QWEN_MODEL_ID,
+    QwenVlm,
+    QwenVlmConfig,
 )
 from spatial_change.perception.sam import (
     SAM3_MODEL_ID,
@@ -39,6 +45,9 @@ __all__ = [
     "FakeLabeler",
     "FakeMaskSegmenter",
     "FakeVlm",
+    "QWEN_MODEL_ID",
+    "QwenVlm",
+    "QwenVlmConfig",
     "SAM21_MODEL_ID",
     "SAM3_MODEL_ID",
     "SIGLIP2_MODEL_ID",
