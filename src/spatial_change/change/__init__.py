@@ -32,6 +32,11 @@ from spatial_change.change.lifting import (
     lift_change_candidates,
 )
 from spatial_change.change.matching import MatchConfig, associate
+from spatial_change.change.unobserved import (
+    UnobservedConfig,
+    extract_unobserved,
+    find_unobserved_regions,
+)
 
 __all__ = [
     "AppearanceConfig",
@@ -44,11 +49,14 @@ __all__ = [
     "LiftedObjects",
     "MatchConfig",
     "PointAppearance",
+    "UnobservedConfig",
     "associate",
     "compare_appearance",
     "describe_instances",
     "extract_candidates",
+    "extract_unobserved",
     "find_candidates",
+    "find_unobserved_regions",
     "fuse_appearance",
     "gated_assignment",
     "lift_candidates",
