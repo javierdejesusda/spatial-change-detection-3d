@@ -363,7 +363,7 @@ def _moved_or_uncertain(
     return Change(
         change_id=change_id,
         type=kind,
-        label=before.label or after.label or _DEFAULT_LABEL,
+        label=_pair_label(before, after),
         description="",
         confidence=confidence * _support_factor(evidence, config),
         before_box=BoxModel.from_box(before.box),
@@ -372,6 +372,27 @@ def _moved_or_uncertain(
         rotation_deg=rotation,
         evidence=evidence,
     )
+
+
+def _pair_label(before: ObjectInstance, after: ObjectInstance) -> str:
+    """Picks the label of a matched pair.
+
+    Args:
+        before: The BEFORE instance.
+        after: The AFTER instance.
+
+    Returns:
+        The label with the higher score, the BEFORE one on a tie and a
+        label without a score ranking lowest; the only label if just one
+        side has one, and the default label if neither does.
+    """
+    named = [(i.label, i.label_score) for i in (before, after) if i.label]
+    if not named:
+        return _DEFAULT_LABEL
+    label, _ = max(
+        named, key=lambda pair: -math.inf if pair[1] is None else pair[1]
+    )
+    return str(label)
 
 
 def _single(

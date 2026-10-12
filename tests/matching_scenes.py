@@ -174,6 +174,7 @@ def instance(
     epoch: Epoch,
     label: str | None = None,
     feature: NDArray[np.float32] | None = None,
+    label_score: float | None = None,
 ) -> ObjectInstance:
     """Wraps points in an instance with their upright box.
 
@@ -183,6 +184,7 @@ def instance(
         epoch: Epoch of the instance.
         label: Optional class name.
         feature: Optional unit appearance feature.
+        label_score: Optional score of the label.
 
     Returns:
         The instance.
@@ -193,6 +195,7 @@ def instance(
         points=points,
         box=fit_upright_box(points, 0.05),
         label=label,
+        label_score=label_score,
         feature=feature,
     )
 

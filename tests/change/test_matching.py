@@ -45,8 +45,11 @@ def _instance(
     index: int = 0,
     feature: NDArray[np.float32] | None = RED,
     label: str | None = None,
+    label_score: float | None = None,
 ) -> ObjectInstance:
-    return instance(points, f"{epoch.value}-{index}", epoch, label, feature)
+    return instance(
+        points, f"{epoch.value}-{index}", epoch, label, feature, label_score
+    )
 
 
 _before = functools.partial(_instance, Epoch.BEFORE)
@@ -392,6 +395,36 @@ def test_the_label_comes_from_the_instance() -> None:
     assert fallback[0].label == "object"
     assert after_only[0].label == "stool"
     assert named[0].description == ""
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        (("chair", 0.4), ("sofa", 0.8), "sofa"),
+        (("chair", 0.8), ("sofa", 0.4), "chair"),
+        (("chair", 0.5), ("sofa", 0.5), "chair"),
+        (("chair", None), ("sofa", 0.2), "sofa"),
+        (("chair", 0.2), ("sofa", None), "chair"),
+        (("chair", None), ("sofa", None), "chair"),
+        ((None, None), ("sofa", 0.1), "sofa"),
+        (("chair", 0.1), (None, None), "chair"),
+        ((None, 0.9), (None, 0.9), "object"),
+    ],
+)
+def test_a_moved_object_takes_the_label_with_the_higher_score(
+    before: tuple[str | None, float | None],
+    after: tuple[str | None, float | None],
+    expected: str,
+) -> None:
+    original, moved = chair_pair(0.4)
+
+    changes = _associate(
+        [_before(original, label=before[0], label_score=before[1])],
+        [_after(moved, label=after[0], label_score=after[1])],
+    )
+
+    assert changes[0].type is ChangeType.MOVED
+    assert changes[0].label == expected
 
 
 def test_the_evidence_sums_the_candidates_inside_each_object() -> None:
