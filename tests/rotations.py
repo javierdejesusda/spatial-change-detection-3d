@@ -6,7 +6,8 @@ Plain functions rather than fixtures, so Hypothesis tests can call them.
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from spatial_change.domain import SE3
+from spatial_change.domain import SE3, Sim3
+from spatial_change.synthetic.trajectory import look_at
 
 
 def random_rotation(rng: np.random.Generator) -> NDArray[np.float64]:
@@ -71,6 +72,60 @@ def rotation_angle_deg(a: NDArray[np.float64], b: NDArray[np.float64]) -> float:
     """
     cos = (np.trace(a.T @ b) - 1.0) / 2.0
     return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+
+
+def angle_deg(a: NDArray[np.float64], b: NDArray[np.float64]) -> float:
+    """Measures the angle between two vectors.
+
+    Args:
+        a: A nonzero vector.
+        b: A nonzero vector of the same length.
+
+    Returns:
+        The angle in degrees, in ``[0, 180]``.
+    """
+    cos = float(a @ b) / float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+
+
+def pitched_cameras(
+    pitch_deg: float,
+    yaws_deg: ArrayLike,
+    center: tuple[float, float, float] = (0.0, 0.0, 1.5),
+    spread: float = 0.0,
+    world_from_room: Sim3 | None = None,
+) -> list[SE3]:
+    """Builds roll-free cameras pitched down, one per yaw.
+
+    The optical axis is ``(cos p cos y, cos p sin y, -sin p)`` in the z-up
+    room frame.
+
+    Args:
+        pitch_deg: Downward pitch of every camera in degrees.
+        yaws_deg: Yaw of each camera in degrees.
+        center: Camera center in the room frame.
+        spread: Distance by which each center moves along its yaw direction.
+        world_from_room: Optional map of the poses into another world frame.
+
+    Returns:
+        One ``world_from_camera`` pose per yaw.
+    """
+    p = np.radians(pitch_deg)
+    poses = []
+    for yaw in np.radians(np.asarray(yaws_deg, dtype=np.float64)):
+        forward = np.array(
+            [np.cos(p) * np.cos(yaw), np.cos(p) * np.sin(yaw), -np.sin(p)]
+        )
+        eye = np.array(center) + spread * np.array(
+            [np.cos(yaw), np.sin(yaw), 0]
+        )
+        pose = look_at(eye, eye + forward)
+        poses.append(
+            pose
+            if world_from_room is None
+            else world_from_room.transform_pose(pose)
+        )
+    return poses
 
 
 def pose_error(estimate: SE3, truth: SE3) -> tuple[float, float]:

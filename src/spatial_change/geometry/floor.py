@@ -36,6 +36,12 @@ _SCORE_BUDGET_BYTES = 16 * 2**20
 # sin of the smallest angle between the forward hint and the floor normal
 # that still defines a heading.
 _MIN_HEADING_SIN = 1e-3
+# Smallest second eigenvalue of the camera x axes: about 28 degrees of yaw
+# spread. Below it the x axes span too little to fix a plane.
+_MIN_YAW_SPREAD = 0.02
+# Largest ratio of the smallest to the second eigenvalue: how much roll,
+# against the yaw spread, the x axes may carry before they stop defining up.
+_MAX_ROLL_RATIO = 0.05
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,10 @@ class FloorConfig:
             raise ValueError("max_planes must be at least 1")
         if not 0.0 < self.min_support_fraction <= 1.0:
             raise ValueError("min_support_fraction must be in (0, 1]")
+
+
+class FloorNotFoundError(ValueError):
+    """Raised when no horizontal plane has enough support to be a floor."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -130,6 +140,42 @@ def camera_up_hint(poses: Sequence[SE3]) -> NDArray[np.float64]:
     if norm < 1e-6:
         raise ValueError("camera up vectors cancel out to zero")
     return mean / norm
+
+
+def estimate_up(poses: Sequence[SE3]) -> NDArray[np.float64]:
+    """Estimates the up direction from the cameras' x axes.
+
+    Handheld cameras pitch down, which tilts the mean up of
+    ``camera_up_hint``. A camera's x axis stays horizontal under pitch and
+    only roll tilts it, so up is the direction the x axes are most nearly
+    perpendicular to: the eigenvector of the smallest eigenvalue of
+    ``mean(x x^T)``. The sign is the one that agrees with the mean up.
+
+    The x axes constrain up only if the cameras yaw enough and roll little.
+    Otherwise this returns ``camera_up_hint(poses)``.
+
+    A steady roll with a small yaw spread passes that test but tilts the
+    estimate by about the roll angle, because the x axes then lie on a tilted
+    plane. A visible floor corrects it: the room z axis is the fitted floor
+    normal, not this estimate.
+
+    Args:
+        poses: Camera-to-world poses.
+
+    Returns:
+        A unit vector of shape ``(3,)``.
+
+    Raises:
+        ValueError: If there are no poses or the mean up vector is (nearly)
+            zero.
+    """
+    hint = camera_up_hint(poses)
+    axes = np.array([pose.rotation[:, 0] for pose in poses])
+    values, vectors = np.linalg.eigh(axes.T @ axes / len(axes))
+    if values[1] < _MIN_YAW_SPREAD or values[0] > _MAX_ROLL_RATIO * values[1]:
+        return hint
+    up = vectors[:, 0]
+    return up if up @ hint >= 0.0 else -up
 
 
 def _unit(vector: ArrayLike, name: str) -> NDArray[np.float64]:
@@ -250,8 +296,8 @@ def fit_floor(
         The floor plane with an up-facing unit normal.
 
     Raises:
-        ValueError: If the inputs are invalid or no horizontal plane has
-            enough support.
+        FloorNotFoundError: If no horizontal plane has enough support.
+        ValueError: If the inputs are invalid.
     """
     cloud = as_finite_points(points, "points", 3)
     up = _unit(up_hint, "up_hint")
@@ -279,7 +325,7 @@ def fit_floor(
             candidates.append((level, normal, offset, int(inside.sum())))
         remaining &= ~inside
     if not candidates:
-        raise ValueError("no horizontal plane with enough support")
+        raise FloorNotFoundError("no horizontal plane with enough support")
     _, normal, offset, count = min(candidates, key=lambda c: c[0])
     return FloorPlane(normal, offset, count)
 

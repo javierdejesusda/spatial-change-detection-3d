@@ -10,25 +10,22 @@ from rooms import (
     sample_faces,
     sample_room,
 )
-from rotations import random_rotation
+from rotations import angle_deg, pitched_cameras, random_rotation
 
 from spatial_change.domain import SE3
 from spatial_change.geometry import floor as floor_module
 from spatial_change.geometry.floor import (
     FloorConfig,
+    FloorNotFoundError,
     FloorPlane,
     camera_up_hint,
+    estimate_up,
     fit_floor,
     floor_frame,
 )
 from spatial_change.synthetic.trajectory import look_at
 
 Z = np.array([0.0, 0.0, 1.0])
-
-
-def _angle_deg(a: NDArray[np.float64], b: NDArray[np.float64]) -> float:
-    cos = float(a @ b) / float(np.linalg.norm(a) * np.linalg.norm(b))
-    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
 
 def _tilted_up(
@@ -84,7 +81,7 @@ def test_floor_recovered_under_random_world_rotation(seed: int) -> None:
 
     floor = fit_floor(cloud, _tilted_up(rng, rotation))
 
-    assert _angle_deg(floor.normal, rotation @ Z) < 0.3
+    assert angle_deg(floor.normal, rotation @ Z) < 0.3
     on_floor = np.abs(room[:, 2]) < 0.01
     assert np.abs(floor.height(cloud[on_floor])).max() < 0.02
     above = world_from_room.apply([[3.0, 2.0, 1.0]])
@@ -152,7 +149,7 @@ def test_cloud_without_a_horizontal_plane_raises() -> None:
     ]
     cloud = sample_faces(rng, walls, density=100.0)
 
-    with pytest.raises(ValueError, match="no horizontal plane"):
+    with pytest.raises(FloorNotFoundError, match="no horizontal plane"):
         fit_floor(cloud, Z)
 
 
@@ -334,3 +331,53 @@ def test_floor_frame_rejects_a_malformed_forward_hint() -> None:
         floor_frame(_floor(Z.copy(), 0.0), np.array([0.0, 1.0]))
     with pytest.raises(ValueError, match="forward_hint"):
         floor_frame(_floor(Z.copy(), 0.0), np.array([np.nan, 0.0, 1.0]))
+
+
+def test_estimate_up_ignores_the_pitch_the_mean_up_cannot() -> None:
+    poses = pitched_cameras(40.0, list(np.linspace(-60.0, 60.0, 25)))
+
+    assert angle_deg(camera_up_hint(poses), Z) > 20.0
+    assert angle_deg(estimate_up(poses), Z) < 0.5
+
+
+def test_estimate_up_works_for_a_capture_turning_in_place() -> None:
+    yaws = list(np.linspace(0.0, 300.0, 40))
+    poses = pitched_cameras(20.0, yaws, spread=0.01)
+
+    assert angle_deg(estimate_up(poses), Z) < 0.5
+
+
+def test_estimate_up_falls_back_without_yaw_spread() -> None:
+    poses = [
+        look_at((0, 0, 1.5), (np.cos(p), 0, 1.5 - np.sin(p)))
+        for p in np.radians(np.linspace(10.0, 50.0, 9))
+    ]
+
+    np.testing.assert_array_equal(estimate_up(poses), camera_up_hint(poses))
+
+
+def test_estimate_up_falls_back_when_roll_rivals_the_yaw_spread() -> None:
+    rolls = np.radians([-35.0, 35.0, -35.0, 35.0, -35.0, 35.0])
+    poses = []
+    for yaw, roll in zip(
+        np.radians([-35, -20, -5, 5, 20, 35]), rolls, strict=True
+    ):
+        base = look_at((0, 0, 1.5), (np.cos(yaw), np.sin(yaw), 1.5))
+        c, s = np.cos(roll), np.sin(roll)
+        about_z = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        poses.append(SE3(base.rotation @ about_z, base.translation))
+
+    np.testing.assert_array_equal(estimate_up(poses), camera_up_hint(poses))
+
+
+@pytest.mark.parametrize("pitch_deg", [40.0, -40.0])
+def test_estimate_up_points_with_the_mean_up(pitch_deg: float) -> None:
+    poses = pitched_cameras(pitch_deg, list(np.linspace(-60.0, 60.0, 25)))
+
+    assert estimate_up(poses) @ camera_up_hint(poses) > 0.0
+    assert estimate_up(poses) @ Z > 0.99
+
+
+def test_estimate_up_rejects_empty_poses() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        estimate_up([])
