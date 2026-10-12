@@ -8,6 +8,7 @@ import pytest
     "module",
     [
         "spatial_change.geometry",
+        "spatial_change.geometry.registration",
         "spatial_change.alignment",
         "spatial_change.alignment.scale",
     ],

@@ -27,6 +27,12 @@ from spatial_change.geometry.projection import (
     usable_pixels,
     visible_points,
 )
+from spatial_change.geometry.registration import (
+    Registration,
+    RegistrationConfig,
+    register_objects,
+)
+from spatial_change.geometry.rotation import rotation_angle_deg
 from spatial_change.geometry.voxels import label_voxel_cells, voxel_cells
 
 __all__ = [
@@ -34,6 +40,8 @@ __all__ = [
     "FloorPlane",
     "IcpConfig",
     "IcpResult",
+    "Registration",
+    "RegistrationConfig",
     "TargetIndex",
     "VisiblePoints",
     "camera_up_hint",
@@ -43,6 +51,8 @@ __all__ = [
     "in_image",
     "label_voxel_cells",
     "project",
+    "register_objects",
+    "rotation_angle_deg",
     "trimmed_icp",
     "umeyama",
     "unproject_depth",

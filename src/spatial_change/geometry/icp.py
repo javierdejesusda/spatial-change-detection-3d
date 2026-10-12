@@ -8,6 +8,7 @@ from numpy.typing import ArrayLike, NDArray
 from spatial_change.domain import SE3
 from spatial_change.domain.transforms import as_finite_points
 from spatial_change.geometry.alignment import umeyama
+from spatial_change.geometry.rotation import rotation_angle_rad
 
 _MIN_PAIRS = 3
 _IDENTITY = SE3.identity()
@@ -147,10 +148,10 @@ def _kept_pairs(
 
 def _step_size(update: SE3) -> float:
     """Larger of the rotation angle (rad) and translation length."""
-    rotation = update.rotation
-    sin = np.linalg.norm(rotation - rotation.T) / (2.0 * np.sqrt(2.0))
-    cos = (np.trace(rotation) - 1.0) / 2.0
-    return float(max(np.arctan2(sin, cos), np.linalg.norm(update.translation)))
+    return max(
+        rotation_angle_rad(update.rotation),
+        float(np.linalg.norm(update.translation)),
+    )
 
 
 _DEFAULT_CONFIG = IcpConfig()
