@@ -5,7 +5,7 @@ import pytest
 
 from spatial_change.domain import ChangeType
 from spatial_change.visualization import RerunConfig
-from spatial_change.visualization.config import DEFAULT_CHANGE_COLORS
+from spatial_change.visualization.palette import CHANGE_COLORS
 
 
 def test_every_change_type_has_its_own_color() -> None:
@@ -68,7 +68,7 @@ def test_the_config_is_hashable_and_its_colors_are_immutable() -> None:
     assert config == RerunConfig()
     assert RerunConfig(seed=1) != config
     assert copied.change_colors[ChangeType.ADDED] != (1, 2, 3)
-    for mapping in (config.change_colors, DEFAULT_CHANGE_COLORS):
+    for mapping in (config.change_colors, CHANGE_COLORS):
         with pytest.raises(TypeError):
             mapping[ChangeType.ADDED] = (0, 0, 0)  # type: ignore[index]
 
@@ -94,3 +94,7 @@ def test_colors_must_be_three_int_bytes(bad: object) -> None:
 
     with pytest.raises(ValueError, match="change_colors"):
         RerunConfig(change_colors=colors)
+
+
+def test_default_box_colors_are_the_shared_palette() -> None:
+    assert dict(RerunConfig().change_colors) == dict(CHANGE_COLORS)

@@ -36,7 +36,8 @@ from spatial_change.domain import (
 )
 from spatial_change.domain.transforms import rotation_to_quaternion
 from spatial_change.visibility import PointEvidence, Vote
-from spatial_change.visualization.config import RGB, RerunConfig
+from spatial_change.visualization.config import RerunConfig
+from spatial_change.visualization.palette import RGB
 
 if TYPE_CHECKING:
     import rerun as rr

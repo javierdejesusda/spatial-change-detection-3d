@@ -8,18 +8,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from spatial_change.domain import ChangeType
-
-RGB = tuple[int, int, int]
-
-DEFAULT_CHANGE_COLORS: Mapping[ChangeType, RGB] = MappingProxyType(
-    {
-        ChangeType.ADDED: (46, 204, 64),
-        ChangeType.REMOVED: (231, 76, 60),
-        ChangeType.MOVED: (52, 152, 255),
-        ChangeType.UNCERTAIN: (241, 196, 15),
-    }
-)
-"""Box colors: green added, red removed, blue moved, yellow uncertain."""
+from spatial_change.visualization.palette import CHANGE_COLORS, RGB
 
 
 @dataclass(frozen=True)
@@ -58,7 +47,7 @@ class RerunConfig:
     max_unobserved_points: int = 20_000
     seed: int = 0
     change_colors: Mapping[ChangeType, RGB] = field(
-        default=DEFAULT_CHANGE_COLORS, hash=False
+        default=CHANGE_COLORS, hash=False
     )
     ghost_alpha: float = 0.25
     unknown_alpha: float = 0.2
