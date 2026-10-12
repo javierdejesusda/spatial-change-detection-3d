@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 from typing import TYPE_CHECKING
 
 from spatial_change import __version__
@@ -243,6 +244,10 @@ def _metadata(
 ) -> dict[str, MetadataValue]:
     """Gathers the flat run information of the report."""
     first = before.frames[0].intrinsics
+    heights = [
+        frame.world_from_camera.translation[2]
+        for frame in (*aligned.before.frames, *aligned.after.frames)
+    ]
     meta: dict[str, MetadataValue] = {
         "version": __version__,
         "device": device,
@@ -256,6 +261,8 @@ def _metadata(
         "points_before": len(before.points),
         "points_after": len(after.points),
         "scale_to_meters": aligned.room_from_world.scale,
+        "floor_observed": aligned.floor_observed,
+        "camera_height_m": float(median(heights)),
         "refine_rounds": aligned.refinement.rounds,
         "refine_rmse": aligned.refinement.icp.rmse,
     }

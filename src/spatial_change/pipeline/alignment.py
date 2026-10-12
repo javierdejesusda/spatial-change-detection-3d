@@ -38,12 +38,15 @@ class AlignedEpochs:
         room_from_world: The gravity alignment applied to both epochs, from
             the world frame of the joint reconstruction.
         refinement: The registration applied to the AFTER epoch after it.
+        floor_observed: Whether the floor was fitted to a visible plane
+            (True) or assumed at the low end of the points (False).
     """
 
     before: EpochReconstruction
     after: EpochReconstruction
     room_from_world: Sim3
     refinement: Refinement
+    floor_observed: bool
 
 
 def _thin_points(
@@ -106,5 +109,9 @@ def align_epochs(
     )
     registered = leveled[1].transformed(Sim3.from_se3(refinement.transform))
     return AlignedEpochs(
-        leveled[0], registered, alignment.room_from_world, refinement
+        leveled[0],
+        registered,
+        alignment.room_from_world,
+        refinement,
+        alignment.floor_observed,
     )

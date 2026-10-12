@@ -242,6 +242,9 @@ def test_the_metadata_records_the_run(template_run: Run) -> None:
     assert metadata["seed"] == 0
     assert "seconds_voting" in metadata
     assert "peak_vram_mb" not in metadata
+    assert metadata["floor_observed"] is True
+    # The synthetic rig is 1.4 to 1.6 m above the floor.
+    assert metadata["camera_height_m"] == pytest.approx(1.5, abs=0.1)
 
 
 def test_the_model_describer_sees_crops_and_unloads_last(vlm_run: Run) -> None:

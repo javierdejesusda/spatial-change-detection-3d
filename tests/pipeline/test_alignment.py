@@ -57,6 +57,7 @@ def test_a_tilted_world_ends_with_the_floor_at_zero_and_z_up() -> None:
         assert abs(height.min()) < 0.05
         assert abs(height.max() - original.points[:, 2].max()) < 0.05
     assert aligned.room_from_world.scale == 1.0
+    assert aligned.floor_observed
 
 
 def test_one_alignment_serves_both_epochs() -> None:

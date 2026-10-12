@@ -5,14 +5,15 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 
 from spatial_change.domain import SE3, Sim3
 from spatial_change.domain.transforms import as_finite_points
 from spatial_change.geometry.floor import (
     FloorConfig,
+    FloorNotFoundError,
     FloorPlane,
-    camera_up_hint,
+    estimate_up,
     fit_floor,
     floor_frame,
 )
@@ -45,13 +46,16 @@ class RoomAlignment:
         room_from_world: Rigid map into the z-up floor frame followed by the
             uniform scale about the room origin, so the floor stays at
             ``z = 0``.
-        floor: The fitted floor plane, in world units.
+        floor: The floor plane, in world units.
         policy: The scale policy that produced the scale.
+        floor_observed: Whether ``floor`` was fitted (True) or assumed
+            (False).
     """
 
     room_from_world: Sim3
     floor: FloorPlane
     policy: ScalePolicy
+    floor_observed: bool
 
     @property
     def scale(self) -> float:
@@ -102,9 +106,60 @@ def estimate_scale(
 
 
 _DEFAULT_FLOOR_CONFIG = FloorConfig()
-# Percentile of the point heights taken as the floor level by the coarse
-# scale that sizes the floor thresholds.
+# Percentile of the point heights taken as the floor level: it sizes the
+# coarse scale and places the assumed floor.
 _FLOOR_PERCENTILE = 2.0
+# The fitted floor must lie at least half way from the cameras down to the
+# low end of the points to count as observed.
+_OBSERVED_FLOOR_FRACTION = 0.5
+
+
+def _choose_floor(
+    cloud: NDArray[np.float64],
+    up: NDArray[np.float64],
+    centers: NDArray[np.float64],
+    point_heights: NDArray[np.float64],
+    low: float,
+    floor_config: FloorConfig,
+) -> tuple[FloorPlane, bool]:
+    """Returns the fitted floor, or the assumed level floor, and which.
+
+    Args:
+        cloud: Scene points of shape ``(N, 3)``.
+        up: Unit up direction.
+        centers: Camera centers of shape ``(K, 3)``.
+        point_heights: Heights of the points along ``up``, shape ``(N,)``.
+        low: The ``_FLOOR_PERCENTILE`` of ``point_heights``.
+        floor_config: Floor search parameters, in the units of ``cloud``.
+
+    Returns:
+        The floor and whether it was observed.
+
+    Raises:
+        ValueError: If the cameras are not above the low end of the points,
+            or a fitted floor lies far above the cameras.
+    """
+    depth = float(np.median(centers @ up)) - low
+    if depth <= 0.0:
+        raise ValueError(
+            "median camera height above the low end of the points must be "
+            "positive; the up direction is wrong"
+        )
+    try:
+        fitted = fit_floor(cloud, up, floor_config)
+    except FloorNotFoundError:
+        fitted = None
+    if fitted is not None:
+        ratio = float(np.median(fitted.height(centers))) / depth
+        if ratio >= _OBSERVED_FLOOR_FRACTION:
+            return fitted, True
+        if ratio <= -_OBSERVED_FLOOR_FRACTION:
+            raise ValueError(
+                "median camera height is far below a fitted floor; the up "
+                "direction is wrong"
+            )
+    near = np.abs(point_heights - low) < floor_config.distance_threshold
+    return FloorPlane(up, -low, int(np.count_nonzero(near))), False
 
 
 def gravity_align(
@@ -116,10 +171,20 @@ def gravity_align(
 ) -> RoomAlignment:
     """Computes the transform from the world frame to a metric room frame.
 
-    The up direction comes from the cameras, the floor from ``fit_floor``,
-    and the heading from the first camera's viewing direction. Scale follows
-    ``policy``, with camera heights measured above the fitted floor. Only
-    the transform is returned; apply it to frames and clouds separately.
+    The up direction comes from the cameras (``estimate_up``), the floor
+    from ``fit_floor``, and the heading from the first camera's viewing
+    direction. Scale follows ``policy``, with camera heights measured above
+    the floor. Only the transform is returned; apply it to frames and clouds
+    separately.
+
+    The floor counts as observed if ``fit_floor`` finds a horizontal plane
+    that lies at least half way from the median camera center down to the
+    low end of the points (a low percentile of their heights along up). The
+    rule has no length in it, so it holds in any units. A scene that never
+    shows its floor (a closet full of coats) yields a shelf or a wall base
+    near camera height instead. Then the floor is assumed: a level plane
+    perpendicular to up at the low end of the points, and
+    ``RoomAlignment.floor_observed`` is False.
 
     Call this ONCE on the union of both epochs' points and cameras, and apply
     the single returned ``Sim3`` to both epochs. Separate per-epoch calls fit
@@ -127,12 +192,12 @@ def gravity_align(
     and a refinement started from the identity then fails silently once the
     yaw difference reaches about 10 degrees.
 
-    ``floor_config.distance_threshold`` is in meters, but the floor is fitted
-    in world units. Under ``CAMERA_HEIGHT`` the threshold is divided by a
-    coarse scale first. That scale uses the median camera height above a low
-    percentile of the point heights along the up hint, which approximates the
-    floor level. The final scale then comes from the fitted floor. The
-    returned floor is expressed in world units.
+    ``floor_config.distance_threshold`` is in meters, but the floor is
+    fitted in world units. Under ``CAMERA_HEIGHT`` it is divided by a coarse
+    scale first. That scale uses the median camera height above a low
+    percentile of the point heights along the up direction, which
+    approximates the floor level. The final scale then comes from the floor.
+    The returned floor is expressed in world units.
 
     Args:
         points: Scene points of shape ``(N, 3)`` in the world frame.
@@ -146,17 +211,18 @@ def gravity_align(
         The alignment into the z-up room frame.
 
     Raises:
-        ValueError: If the policy is unknown, there are no poses, no floor is
-            found, the points are not finite, or the median camera height
-            above the floor is not positive (the cameras are below the
-            floor, which means the up hint or the floor is wrong).
+        ValueError: If the policy is unknown, there are no poses, the points
+            are not finite, the median camera center is not above the low
+            end of the points, or a fitted floor lies far above the cameras
+            (the up direction is wrong, for example upside down).
     """
     policy = ScalePolicy(policy)
     cloud = as_finite_points(points, "points", 3)
-    up = camera_up_hint(camera_poses)
+    up = estimate_up(camera_poses)
     centers = np.array([pose.translation for pose in camera_poses])
+    point_heights = cloud @ up
+    low = float(np.percentile(point_heights, _FLOOR_PERCENTILE))
     if policy == ScalePolicy.CAMERA_HEIGHT:
-        low = float(np.percentile(cloud @ up, _FLOOR_PERCENTILE))
         coarse = estimate_scale(
             centers @ up - low, policy, assumed_camera_height_m
         )
@@ -164,14 +230,11 @@ def gravity_align(
             floor_config,
             distance_threshold=floor_config.distance_threshold / coarse,
         )
-    floor = fit_floor(cloud, up, floor_config)
+    floor, observed = _choose_floor(
+        cloud, up, centers, point_heights, low, floor_config
+    )
     frame = floor_frame(floor, camera_poses[0].rotation[:, 2])
     heights = floor.height(centers)
-    if float(np.median(heights)) <= 0.0:
-        raise ValueError(
-            "median camera height above the floor must be positive; the up "
-            "hint or the floor is wrong"
-        )
     scale = estimate_scale(heights, policy, assumed_camera_height_m)
     room_from_world = Sim3(scale, frame.rotation, scale * frame.translation)
-    return RoomAlignment(room_from_world, floor, policy)
+    return RoomAlignment(room_from_world, floor, policy, observed)
