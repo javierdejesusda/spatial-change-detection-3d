@@ -142,6 +142,24 @@ class FeatureEncoder(Unloadable, Protocol):
         ...
 
 
+def check_vocabulary(vocabulary: Sequence[str]) -> None:
+    """Checks the label names of a ``Labeler`` call.
+
+    Args:
+        vocabulary: The label names.
+
+    Raises:
+        ValueError: If the vocabulary is empty, holds a name twice, or holds
+            an entry that is not a non-empty string.
+    """
+    if not vocabulary:
+        raise ValueError("vocabulary must not be empty")
+    if any(not isinstance(name, str) or not name for name in vocabulary):
+        raise ValueError("vocabulary entries must be non-empty strings")
+    if len(set(vocabulary)) != len(vocabulary):
+        raise ValueError("vocabulary entries must be unique")
+
+
 @runtime_checkable
 class Labeler(Unloadable, Protocol):
     """Assigns open-vocabulary labels to image crops."""

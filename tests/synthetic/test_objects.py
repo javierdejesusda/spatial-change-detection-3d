@@ -4,6 +4,7 @@ from rotations import rotation_z
 
 from spatial_change.domain import SE3
 from spatial_change.synthetic.objects import (
+    CLASS_COLORS,
     FACTORIES,
     ObjectModel,
     place,
@@ -21,6 +22,18 @@ def build(label: str, seed: int = 0) -> ObjectModel:
 
 def test_catalog_has_required_furniture() -> None:
     assert set(_ROLES.values()) <= set(FACTORIES)
+
+
+def test_class_colors_are_the_model_colors_as_bytes() -> None:
+    assert set(CLASS_COLORS) == set(FACTORIES)
+    for label in LABELS:
+        expected = tuple(round(c * 255) for c in build(label).color)
+        assert CLASS_COLORS[label] == expected
+
+
+def test_class_colors_are_read_only() -> None:
+    with pytest.raises(TypeError):
+        CLASS_COLORS["table"] = (0, 0, 0)  # type: ignore[index]
 
 
 @pytest.mark.parametrize("label", LABELS)

@@ -12,11 +12,16 @@ def test_package_exports_the_public_names() -> None:
         "DinoConfig",
         "DinoFeatureEncoder",
         "FakeFeatureEncoder",
+        "FakeLabeler",
         "FakeMaskSegmenter",
         "SAM21_MODEL_ID",
         "SAM3_MODEL_ID",
         "SamConfig",
+        "SIGLIP2_MODEL_ID",
+        "SIGLIP_MODEL_ID",
         "SamSegmenter",
+        "SiglipConfig",
+        "SiglipLabeler",
         "sample_features",
     }
     for name in perception.__all__:

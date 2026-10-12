@@ -4,9 +4,10 @@ from numpy.typing import NDArray
 
 from spatial_change.perception.fake import (
     FakeFeatureEncoder,
+    FakeLabeler,
     FakeMaskSegmenter,
 )
-from spatial_change.ports import FeatureEncoder, MaskSegmenter
+from spatial_change.ports import FeatureEncoder, Labeler, MaskSegmenter
 
 
 def _image(height: int, width: int, rgb: tuple[int, int, int]) -> NDArray:
@@ -210,3 +211,124 @@ def test_the_segmenter_rejects_an_invalid_prompt_and_records_nothing() -> None:
         segmenter.segment(image, np.array([[3.0, 0.0, 1.0, 1.0]]), None)
 
     assert segmenter.calls == []
+
+
+_COLORS = {"red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255)}
+
+
+def test_fake_labeler_satisfies_the_port() -> None:
+    assert isinstance(FakeLabeler(_COLORS), Labeler)
+
+
+def test_the_label_is_the_entry_with_the_nearest_known_hue() -> None:
+    crops = [_image(4, 6, (230, 20, 10)), _image(3, 3, (10, 20, 240))]
+
+    labels = FakeLabeler(_COLORS).label(crops, ["green", "red", "blue"])
+
+    assert [label for label, _ in labels] == ["red", "blue"]
+    assert [score for _, score in labels] == [1.0, 1.0]
+
+
+def test_brightness_does_not_change_the_label() -> None:
+    labeler = FakeLabeler({"red": (200, 40, 40), "blue": (40, 40, 200)})
+
+    dim = labeler.label([_image(2, 2, (50, 10, 10))], ["red", "blue"])
+    bright = labeler.label([_image(2, 2, (255, 51, 51))], ["red", "blue"])
+
+    assert dim == [("red", 1.0)]
+    assert bright == [("red", 1.0)]
+
+
+def test_the_score_is_the_share_of_the_matching_pixels_for_the_label() -> None:
+    crop = _image(4, 4, (255, 0, 0))
+    crop[:1] = (0, 0, 255)
+    crop[1:2, :2] = (90, 90, 90)
+
+    ((label, score),) = FakeLabeler(_COLORS).label([crop], ["red", "blue"])
+
+    assert label == "red"
+    assert score == pytest.approx(10 / 14)
+
+
+def test_pixels_of_another_hue_do_not_vote() -> None:
+    crop = _image(2, 2, (255, 0, 0))
+    crop[0, 0] = (255, 80, 0)
+
+    ((_, score),) = FakeLabeler(_COLORS, min_cosine=0.99).label(
+        [crop], ["red", "green"]
+    )
+    ((_, loose),) = FakeLabeler(_COLORS, min_cosine=0.9).label(
+        [crop], ["red", "green"]
+    )
+
+    assert score == 1.0
+    assert loose == 1.0
+    ((_, split),) = FakeLabeler(
+        {"red": (255, 0, 0), "orange": (255, 80, 0)}, min_cosine=0.9
+    ).label([crop], ["red", "orange"])
+    assert split == pytest.approx(0.75)
+
+
+def test_entries_without_a_known_color_are_not_candidates() -> None:
+    labeler = FakeLabeler(_COLORS)
+
+    ((label, score),) = labeler.label(
+        [_image(2, 2, (255, 0, 0))], ["table", "red"]
+    )
+
+    assert (label, score) == ("red", 1.0)
+
+
+def test_a_crop_that_matches_nothing_gives_the_first_entry_with_zero() -> None:
+    results = FakeLabeler(_COLORS).label(
+        [_image(2, 2, (90, 90, 90)), _image(2, 2, (0, 0, 0))],
+        ["table", "red"],
+    )
+
+    assert results == [("table", 0.0), ("table", 0.0)]
+
+
+def test_a_vocabulary_without_known_colors_gives_the_first_with_zero() -> None:
+    results = FakeLabeler(_COLORS).label(
+        [_image(2, 2, (255, 0, 0))] * 2, ["table", "chair"]
+    )
+
+    assert results == [("table", 0.0), ("table", 0.0)]
+
+
+def test_a_hue_tie_goes_to_the_earlier_entry() -> None:
+    labeler = FakeLabeler({"a": (10, 0, 0), "b": (20, 0, 0)})
+
+    ((label, _),) = labeler.label([_image(2, 2, (10, 0, 0))], ["b", "a"])
+
+    assert label == "b"
+
+
+def test_no_crops_give_no_labels() -> None:
+    assert FakeLabeler(_COLORS).label([], ["red"]) == []
+
+
+@pytest.mark.parametrize("min_cosine", [0.0, -0.5, 1.5])
+def test_the_minimum_cosine_must_be_in_the_open_unit_interval(
+    min_cosine: float,
+) -> None:
+    with pytest.raises(ValueError, match="min_cosine"):
+        FakeLabeler(_COLORS, min_cosine=min_cosine)
+
+
+def test_labeler_inputs_are_validated() -> None:
+    labeler = FakeLabeler(_COLORS)
+
+    with pytest.raises(ValueError, match="image"):
+        labeler.label([np.zeros((2, 2), np.uint8)], ["red"])
+    with pytest.raises(ValueError, match="vocabulary"):
+        labeler.label([_image(2, 2, (1, 1, 1))], [])
+
+
+def test_labeler_unloads_are_counted() -> None:
+    labeler = FakeLabeler(_COLORS)
+
+    labeler.unload()
+    labeler.unload()
+
+    assert labeler.unload_count == 2

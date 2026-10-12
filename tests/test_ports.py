@@ -12,6 +12,7 @@ from spatial_change.ports import (
     ReconstructionResult,
     Reconstructor,
     Unloadable,
+    check_vocabulary,
 )
 
 _INTRINSICS = Intrinsics(fx=1.0, fy=1.0, cx=1.5, cy=1.0, width=4, height=3)
@@ -115,3 +116,17 @@ def test_reconstruction_result_rejects_unequal_lengths() -> None:
             depth=[np.ones((3, 4), np.float32)],
             confidence=[np.ones((3, 4), np.float32)],
         )
+
+
+@pytest.mark.parametrize(
+    "vocabulary", [[], ["red", "red"], ["red", ""], ["red", 3]]
+)
+def test_check_vocabulary_rejects_an_invalid_vocabulary(
+    vocabulary: list[object],
+) -> None:
+    with pytest.raises(ValueError, match="vocabulary"):
+        check_vocabulary(vocabulary)  # type: ignore[arg-type]
+
+
+def test_check_vocabulary_accepts_unique_names() -> None:
+    check_vocabulary(["red", "green"])

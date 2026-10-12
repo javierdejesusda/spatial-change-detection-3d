@@ -8,8 +8,9 @@ factory. A model is posed in the world with a yaw-only ``SE3`` from
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
 import open3d as o3d
@@ -29,6 +30,18 @@ _COLORS: dict[str, tuple[float, float, float]] = {
     "drum": (0.55, 0.20, 0.60),
     "shelf": (0.80, 0.78, 0.70),
 }
+
+CLASS_COLORS: Mapping[str, tuple[int, int, int]] = MappingProxyType(
+    {
+        label: (
+            round(color[0] * 255),
+            round(color[1] * 255),
+            round(color[2] * 255),
+        )
+        for label, color in _COLORS.items()
+    }
+)
+"""Base RGB color of each class as 0 to 255 integers, read-only."""
 
 
 @dataclass(frozen=True, eq=False)
