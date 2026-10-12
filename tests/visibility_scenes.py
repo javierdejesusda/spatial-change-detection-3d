@@ -179,6 +179,29 @@ class SceneEvidence:
     evidence: dict[Epoch, PointEvidence]
 
 
+def vote_pair(
+    pair: SyntheticScenePair,
+    clouds: dict[Epoch, LabelledCloud],
+    config: VisibilityConfig,
+) -> SceneEvidence:
+    """Votes each epoch's cloud against the other epoch's frames.
+
+    Args:
+        pair: The scene pair.
+        clouds: The labelled cloud of each epoch.
+        config: Visibility parameters.
+
+    Returns:
+        The pair, its clouds, and the votes on both clouds.
+    """
+    voters = {Epoch.BEFORE: pair.after.frames, Epoch.AFTER: pair.before.frames}
+    evidence = {
+        epoch: vote_points(cloud.points, voters[epoch], config)
+        for epoch, cloud in clouds.items()
+    }
+    return SceneEvidence(pair, clouds, evidence)
+
+
 @functools.cache
 def scene_evidence(seed: int, config: VisibilityConfig) -> SceneEvidence:
     """Votes each epoch's cloud of a scene against the other epoch's frames.
@@ -191,13 +214,7 @@ def scene_evidence(seed: int, config: VisibilityConfig) -> SceneEvidence:
         The pair, its clouds, and the votes on both clouds.
     """
     pair, before, after = scene_clouds(seed)
-    clouds = {Epoch.BEFORE: before, Epoch.AFTER: after}
-    voters = {Epoch.BEFORE: pair.after.frames, Epoch.AFTER: pair.before.frames}
-    evidence = {
-        epoch: vote_points(cloud.points, voters[epoch], config)
-        for epoch, cloud in clouds.items()
-    }
-    return SceneEvidence(pair, clouds, evidence)
+    return vote_pair(pair, {Epoch.BEFORE: before, Epoch.AFTER: after}, config)
 
 
 def hidden_object_indices(pair: SyntheticScenePair) -> set[int]:

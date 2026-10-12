@@ -12,15 +12,21 @@ def test_package_exports_the_public_names() -> None:
         "CandidateConfig",
         "ChangeCandidates",
         "CrossAppearance",
+        "DescriptorConfig",
         "LiftConfig",
         "LiftedObjects",
+        "MatchConfig",
         "PointAppearance",
+        "associate",
         "compare_appearance",
+        "describe_instances",
         "extract_candidates",
         "find_candidates",
         "fuse_appearance",
+        "gated_assignment",
         "lift_candidates",
         "lift_change_candidates",
+        "linear_assignment",
     }
     for name in change.__all__:
         assert hasattr(change, name)
