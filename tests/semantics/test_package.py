@@ -7,16 +7,17 @@ import spatial_change.semantics as semantics
 def test_package_exports_the_public_names() -> None:
     assert semantics.__all__ == sorted(semantics.__all__)
     assert set(semantics.__all__) == {
-        "FURNITURE",
-        "INDOOR_OBJECTS",
-        "STRUCTURE",
         "ChangeFact",
         "Direction",
+        "FURNITURE",
+        "INDOOR_OBJECTS",
         "LabelConfig",
         "Landmark",
         "LandmarkConfig",
         "LandmarkRelation",
         "RelationConfig",
+        "STRUCTURE",
+        "ValidationResult",
         "build_change_fact",
         "describe_direction",
         "distance_to_box",
@@ -25,7 +26,12 @@ def test_package_exports_the_public_names() -> None:
         "format_rotation",
         "label_instances",
         "nearest_landmarks",
+        "repair_description",
+        "summarize_changes",
+        "summarize_report",
         "supporting_surface",
+        "template_sentence",
+        "validate_description",
     }
     for name in semantics.__all__:
         assert hasattr(semantics, name)

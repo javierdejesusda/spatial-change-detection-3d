@@ -1,4 +1,4 @@
-"""Spatial semantics: labels, landmarks, and structured facts about changes.
+"""Spatial semantics: labels, landmarks, facts, and sentences about changes.
 
 Importing the package does not load torch or transformers; the labeler that
 the functions take does.
@@ -23,6 +23,16 @@ from spatial_change.semantics.relations import (
     nearest_landmarks,
     supporting_surface,
 )
+from spatial_change.semantics.summary import (
+    summarize_changes,
+    summarize_report,
+)
+from spatial_change.semantics.template import template_sentence
+from spatial_change.semantics.validator import (
+    ValidationResult,
+    repair_description,
+    validate_description,
+)
 from spatial_change.semantics.vocabulary import (
     FURNITURE,
     INDOOR_OBJECTS,
@@ -40,6 +50,7 @@ __all__ = [
     "LandmarkRelation",
     "RelationConfig",
     "STRUCTURE",
+    "ValidationResult",
     "build_change_fact",
     "describe_direction",
     "distance_to_box",
@@ -48,5 +59,10 @@ __all__ = [
     "format_rotation",
     "label_instances",
     "nearest_landmarks",
+    "repair_description",
+    "summarize_changes",
+    "summarize_report",
     "supporting_surface",
+    "template_sentence",
+    "validate_description",
 ]
