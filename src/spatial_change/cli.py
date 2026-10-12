@@ -71,6 +71,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="write into an output folder that already holds files",
     )
     run.add_argument(
+        "--cache-dir",
+        type=Path,
+        help=(
+            "folder that keeps the reconstruction and the appearance "
+            "comparison, so a rerun with the same videos skips them"
+        ),
+    )
+    run.add_argument(
         "--debug",
         action="store_true",
         help="show the full traceback of a failed run",
@@ -132,6 +140,7 @@ def _run_command(args: argparse.Namespace) -> int:
             pipeline.default_models(config),
             show,
             overwrite=args.overwrite,
+            cache_dir=args.cache_dir,
         )
     except Exception as error:
         if args.debug:

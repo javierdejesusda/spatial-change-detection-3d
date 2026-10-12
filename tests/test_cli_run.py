@@ -35,6 +35,7 @@ class Spy:
         progress: Callable[[StageEvent], None] | None = None,
         *,
         overwrite: bool = False,
+        cache_dir: Path | None = None,
     ) -> PipelineResult:
         self.calls.append(
             {
@@ -44,6 +45,7 @@ class Spy:
                 "config": config,
                 "models": models,
                 "overwrite": overwrite,
+                "cache_dir": cache_dir,
             }
         )
         if progress is not None:
@@ -87,6 +89,34 @@ def test_run_calls_the_pipeline_with_the_paths_and_the_defaults(
     assert "[4/12] voting: 4.2 s" in captured.err
     assert "0 changes" in captured.out
     assert str(out / "changes.json") in captured.out
+
+
+def test_the_cache_dir_flag_reaches_the_pipeline(
+    spy: Spy, tmp_path: Path
+) -> None:
+    cache = tmp_path / "cache"
+
+    code = main(
+        [
+            "run",
+            "a.mp4",
+            "b.mp4",
+            "--out",
+            str(tmp_path),
+            "--cache-dir",
+            str(cache),
+        ]
+    )
+
+    assert code == 0
+    assert spy.calls[0]["cache_dir"] == cache
+    assert spy.calls[0]["config"] == RunConfig()
+
+
+def test_no_cache_dir_flag_means_no_cache(spy: Spy, tmp_path: Path) -> None:
+    main(["run", "a.mp4", "b.mp4", "--out", str(tmp_path)])
+
+    assert spy.calls[0]["cache_dir"] is None
 
 
 def test_flags_override_the_defaults(spy: Spy, tmp_path: Path) -> None:
