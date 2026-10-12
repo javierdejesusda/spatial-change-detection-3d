@@ -9,20 +9,30 @@ shared timeline sees when it loads and when it unloads.
 import itertools
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from matching_pipeline import oracle_segmenter
 from numpy.typing import NDArray
+from visibility_scenes import SEEDS, scene_clouds
 
 from spatial_change.capture import VideoFrame
 from spatial_change.domain import Epoch, Frame
 from spatial_change.perception import FakeFeatureEncoder, FakeLabeler
-from spatial_change.pipeline import Models
+from spatial_change.perception.fake import FAKE_ENCODER_ID
+from spatial_change.pipeline import (
+    Models,
+    PipelineResult,
+    ProgressCallback,
+    RunConfig,
+    run_frames,
+)
 from spatial_change.ports import ReconstructionResult
 from spatial_change.synthetic.scene import SyntheticScenePair
 
 PATCH = 8
+TEMPLATE = RunConfig(device="cpu", describer="template", voxel_size=None)
 
 
 @dataclass
@@ -187,5 +197,51 @@ def synthetic_models(
         labeler=track("labeler", lambda: FakeLabeler(colors)),
         vlm=track("vlm", vlm),
         max_frames=128,
-        ids={"reconstruction": "oracle", "descriptions": "fake"},
+        ids={
+            "reconstruction": "oracle",
+            "features": FAKE_ENCODER_ID,
+            "descriptions": "fake",
+        },
     )
+
+
+def run_pair(
+    out_dir: Path,
+    config: RunConfig = TEMPLATE,
+    progress: ProgressCallback | None = None,
+    *,
+    seed: int = SEEDS[0],
+    cache_dir: Path | None = None,
+    vlm: Callable[[], Any] = DescribingVlm,
+    mutate: Callable[[list[VideoFrame]], list[VideoFrame]] | None = None,
+    adapt: Callable[[Models], Models] | None = None,
+) -> tuple[PipelineResult, Timeline]:
+    """Runs the pipeline on the keyframes of a scene pair, with fake models.
+
+    Args:
+        out_dir: Output folder.
+        config: The knobs of the run.
+        progress: Receives the start and the end of every stage.
+        seed: Seed of the scene pair.
+        cache_dir: Folder of the stage cache, or ``None`` for no cache.
+        vlm: Factory of the describing model.
+        mutate: Changes the BEFORE keyframes before the run.
+        adapt: Changes the models before the run.
+
+    Returns:
+        The result and the timeline of the models built.
+    """
+    pair, _, _ = scene_clouds(seed)
+    timeline = Timeline()
+    models = synthetic_models(pair, timeline, vlm)
+    before = video_frames(pair, Epoch.BEFORE)
+    result = run_frames(
+        mutate(before) if mutate else before,
+        video_frames(pair, Epoch.AFTER),
+        out_dir,
+        config,
+        adapt(models) if adapt else models,
+        progress,
+        cache_dir=cache_dir,
+    )
+    return result, timeline

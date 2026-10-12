@@ -266,6 +266,16 @@ class StageCache:
         arrays, meta = compute()
         return self.put(key, arrays, meta), False
 
+    def discard(self, key: CacheKey) -> None:
+        """Removes one entry, for example one that cannot be decoded.
+
+        A missing entry, or one that cannot be removed, is left alone.
+
+        Args:
+            key: Cache key.
+        """
+        shutil.rmtree(self.path_for(key), ignore_errors=True)
+
     def clear_stage(self, stage: str) -> int:
         """Removes every entry of one stage.
 

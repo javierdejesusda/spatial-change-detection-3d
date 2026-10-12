@@ -6,9 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 from pipeline_scenes import (
+    TEMPLATE,
     DescribingVlm,
     Timeline,
     Tracked,
+    run_pair,
     synthetic_models,
     video_frames,
 )
@@ -42,7 +44,6 @@ EXPECTED_KIND = {
     ObjectStatus.ADDED: ChangeType.ADDED,
     ObjectStatus.REMOVED: ChangeType.REMOVED,
 }
-TEMPLATE = RunConfig(device="cpu", describer="template", voxel_size=None)
 MODEL = RunConfig(device="cpu", describer="vlm", voxel_size=None)
 SMALL_SCENE = SceneConfig(width=64, height=48, frames_per_epoch=6)
 """Runs in about a second and still reaches every stage on seed 0."""
@@ -58,18 +59,12 @@ class Run:
 
 
 def execute(seed: int, config: RunConfig, out_dir: Path) -> Run:
-    pair, _, _ = scene_clouds(seed)
-    timeline = Timeline()
     vlm = DescribingVlm()
     events: list[StageEvent] = []
-    result = run_frames(
-        video_frames(pair, Epoch.BEFORE),
-        video_frames(pair, Epoch.AFTER),
-        out_dir,
-        config,
-        synthetic_models(pair, timeline, lambda: vlm),
-        events.append,
+    result, timeline = run_pair(
+        out_dir, config, events.append, seed=seed, vlm=lambda: vlm
     )
+    pair, _, _ = scene_clouds(seed)
     return Run(result, timeline, events, pair, vlm)
 
 

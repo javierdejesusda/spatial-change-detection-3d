@@ -305,3 +305,35 @@ def test_clear_stage_only_removes_that_stage(tmp_path: Path) -> None:
 def test_clear_stage_rejects_unsafe_name(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         StageCache(tmp_path).clear_stage("../x")
+
+
+def test_discard_removes_only_that_entry(tmp_path: Path) -> None:
+    cache = StageCache(tmp_path)
+    first, second = make_key(config={"i": 1}), make_key(config={"i": 2})
+    for key in (first, second):
+        cache.put(key, {"a": np.zeros(1)}, {})
+
+    cache.discard(first)
+
+    assert cache.get(first) is None
+    assert cache.get(second) is not None
+
+
+def test_discarding_a_missing_entry_does_nothing(tmp_path: Path) -> None:
+    StageCache(tmp_path).discard(make_key())
+
+
+def test_discard_does_not_raise_when_the_entry_cannot_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = StageCache(tmp_path)
+    key = make_key()
+    cache.put(key, {"a": np.zeros(1)}, {})
+
+    def locked(path: Path, ignore_errors: bool = False) -> None:
+        if not ignore_errors:
+            raise PermissionError("locked")
+
+    monkeypatch.setattr(store_module.shutil, "rmtree", locked)
+
+    cache.discard(key)

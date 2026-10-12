@@ -17,7 +17,9 @@ from statistics import median
 from typing import TYPE_CHECKING
 
 from spatial_change import __version__
+from spatial_change.cache import StageCache
 from spatial_change.change import (
+    CrossAppearance,
     LiftedObjects,
     associate,
     compare_appearance,
@@ -48,6 +50,12 @@ from spatial_change.pipeline.outputs import (
     write_outputs,
 )
 from spatial_change.pipeline.progress import ProgressCallback, StageClock
+from spatial_change.pipeline.stage_cache import (
+    APPEARANCE,
+    RECONSTRUCTION,
+    appearance_cached,
+    reconstruct_cached,
+)
 from spatial_change.pipeline.videos import load_video_frames
 from spatial_change.ports import Describer
 from spatial_change.semantics import (
@@ -62,6 +70,7 @@ from spatial_change.visibility import CrossEvidence, vote_epochs
 
 if TYPE_CHECKING:
     from spatial_change.capture import VideoFrame
+    from spatial_change.reconstruction.joint import JointReconstruction
 
 MetadataValue = str | int | float | bool
 
@@ -97,6 +106,7 @@ def run_videos(
     progress: ProgressCallback | None = None,
     *,
     overwrite: bool = False,
+    cache_dir: Path | None = None,
 ) -> PipelineResult:
     """Runs the whole system on two videos of the same area.
 
@@ -108,6 +118,9 @@ def run_videos(
         models: Factories of the models.
         progress: Receives the start and the end of every stage.
         overwrite: Whether a folder that already holds files is accepted.
+        cache_dir: Folder that keeps the reconstruction and the appearance
+            comparison between runs, or ``None`` to compute both every
+            time. Where the cache lives is not part of any key.
 
     Returns:
         The report, its facts, the files, and the stage times.
@@ -146,6 +159,7 @@ def run_videos(
         models,
         clock,
         extra,
+        cache_dir,
     )
 
 
@@ -158,6 +172,7 @@ def run_frames(
     progress: ProgressCallback | None = None,
     *,
     overwrite: bool = False,
+    cache_dir: Path | None = None,
 ) -> PipelineResult:
     """Runs everything after decoding on the keyframes of two videos.
 
@@ -170,6 +185,9 @@ def run_frames(
         models: Factories of the models.
         progress: Receives the start and the end of every stage.
         overwrite: Whether a folder that already holds files is accepted.
+        cache_dir: Folder that keeps the reconstruction and the appearance
+            comparison between runs, or ``None`` to compute both every
+            time. Where the cache lives is not part of any key.
 
     Returns:
         The report, its facts, the files, and the stage times.
@@ -192,6 +210,7 @@ def run_frames(
         models,
         StageClock(progress),
         {},
+        cache_dir,
     )
 
 
@@ -240,6 +259,7 @@ def _metadata(
     aligned: AlignedEpochs,
     clock: StageClock,
     probe: CudaMemoryProbe | None,
+    cache_hits: Sequence[str],
     extra: Mapping[str, MetadataValue],
 ) -> dict[str, MetadataValue]:
     """Gathers the flat run information of the report."""
@@ -265,6 +285,7 @@ def _metadata(
         "camera_height_m": float(median(heights)),
         "refine_rounds": aligned.refinement.rounds,
         "refine_rmse": aligned.refinement.icp.rmse,
+        "cache_hits": ",".join(cache_hits),
     }
     meta.update({f"model_{role}": name for role, name in models.ids.items()})
     meta.update({f"seconds_{n}": s for n, s in clock.timings.items()})
@@ -283,6 +304,7 @@ def _run(
     models: Models,
     clock: StageClock,
     extra: Mapping[str, MetadataValue],
+    cache_dir: Path | None,
 ) -> PipelineResult:
     """Runs every stage after decoding."""
     from spatial_change.reconstruction import reconstruct_joint
@@ -292,11 +314,20 @@ def _run(
     if probe is not None:
         probe.reset()
 
-    with (
-        clock.stage("reconstruction"),
-        loaded(models.reconstructor) as backbone,
-    ):
-        joint = reconstruct_joint(backbone, before_frames, after_frames)
+    cache = StageCache(cache_dir) if cache_dir is not None else None
+    cache_hits: list[str] = []
+
+    def reconstruct() -> JointReconstruction:
+        with loaded(models.reconstructor) as backbone:
+            return reconstruct_joint(backbone, before_frames, after_frames)
+
+    with clock.stage(RECONSTRUCTION):
+        reconstruction = reconstruct_cached(
+            cache, models, before_frames, after_frames, reconstruct
+        )
+    joint = reconstruction.value
+    if reconstruction.hit:
+        cache_hits.append(RECONSTRUCTION)
 
     with clock.stage("alignment"):
         aligned = align_epochs(joint.before, joint.after, stages)
@@ -305,12 +336,22 @@ def _run(
     with clock.stage("voting"):
         evidence: CrossEvidence = vote_epochs(before, after, stages.visibility)
 
-    with clock.stage("appearance"):
+    def compare() -> tuple[CrossAppearance, str | None]:
         with loaded(models.encoder) as encoder:
-            appearance = compare_appearance(
+            result = compare_appearance(
                 before, after, encoder, stages.appearance
             )
-        evidence = fuse_appearance(evidence, appearance, stages.appearance)
+            return result, encoder.loaded_model_id
+
+    with clock.stage(APPEARANCE):
+        appearance = appearance_cached(
+            cache, models, stages, before, after, compare
+        )
+        if appearance.hit:
+            cache_hits.append(APPEARANCE)
+        evidence = fuse_appearance(
+            evidence, appearance.value, stages.appearance
+        )
 
     with clock.stage("candidates"):
         candidates = find_candidates(before, after, evidence, stages.candidates)
@@ -384,6 +425,7 @@ def _run(
                 aligned,
                 clock,
                 probe,
+                cache_hits,
                 extra,
             ),
         )

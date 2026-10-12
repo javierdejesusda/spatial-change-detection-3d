@@ -9,8 +9,9 @@ Importing this module does not load torch, transformers, or cv2.
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
+from spatial_change.cache import JsonValue
 from spatial_change.pipeline.config import RunConfig, resolve_device
 from spatial_change.ports import (
     FeatureEncoder,
@@ -37,6 +38,9 @@ class Models:
         max_frames: Views the reconstruction accepts at once, which the
             keyframes of both videos together must not exceed.
         ids: The weights each role asks for, by role, for the report.
+        settings: Every setting of the adapters whose results are cached,
+            by role (``reconstruction`` and ``features``), so a cache key
+            changes with any of them.
     """
 
     reconstructor: Callable[[], Reconstructor]
@@ -46,6 +50,9 @@ class Models:
     vlm: Callable[[], VisionLanguageModel]
     max_frames: int = 128
     ids: Mapping[str, str] = field(default_factory=dict)
+    settings: Mapping[str, Mapping[str, JsonValue]] = field(
+        default_factory=dict
+    )
 
 
 @contextmanager
@@ -109,4 +116,5 @@ def default_models(config: RunConfig) -> Models:
             "labels": siglip.model_id,
             "descriptions": qwen.model_id,
         },
+        settings={"reconstruction": asdict(pi3x), "features": asdict(dino)},
     )

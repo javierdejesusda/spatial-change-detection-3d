@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 
@@ -31,6 +32,18 @@ def test_the_default_factories_build_the_local_models_without_loading() -> None:
         "labels",
         "descriptions",
     }
+
+
+def test_the_default_models_expose_every_adapter_setting() -> None:
+    models = default_models(RunConfig(device="cpu"))
+
+    reconstruction = models.settings["reconstruction"]
+    features = models.settings["features"]
+    assert reconstruction["max_frames"] == models.max_frames
+    assert reconstruction["device"] == "cpu"
+    assert features["model_id"] == models.ids["features"]
+    assert features["fallback_model_id"]
+    json.dumps(models.settings)
 
 
 def test_building_the_default_factories_does_not_import_torch() -> None:
