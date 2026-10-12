@@ -2,8 +2,11 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from spatial_change.perception.fake import FakeFeatureEncoder
-from spatial_change.ports import FeatureEncoder
+from spatial_change.perception.fake import (
+    FakeFeatureEncoder,
+    FakeMaskSegmenter,
+)
+from spatial_change.ports import FeatureEncoder, MaskSegmenter
 
 
 def _image(height: int, width: int, rgb: tuple[int, int, int]) -> NDArray:
@@ -110,3 +113,100 @@ def test_calls_are_counted() -> None:
 def test_invalid_images_are_rejected(image: NDArray) -> None:
     with pytest.raises(ValueError, match="image"):
         FakeFeatureEncoder(4).encode(image)
+
+
+def _segment(
+    shape: tuple[int, int], boxes: list[list[float]]
+) -> NDArray[np.bool_]:
+    image = np.zeros((*shape, 3), np.uint8)
+    array = np.array(boxes, np.float64).reshape(-1, 4)
+    return FakeMaskSegmenter().segment(image, array, None)
+
+
+def test_fake_segmenter_satisfies_the_port() -> None:
+    assert isinstance(FakeMaskSegmenter(), MaskSegmenter)
+
+
+def test_a_mask_is_the_pixels_whose_centers_lie_in_the_box() -> None:
+    masks = _segment((6, 8), [[2.0, 1.0, 4.0, 3.0]])
+
+    assert masks.shape == (1, 6, 8)
+    assert masks.dtype == np.bool_
+    expected = np.zeros((6, 8), bool)
+    expected[1:4, 2:5] = True
+    np.testing.assert_array_equal(masks[0], expected)
+
+
+def test_fractional_boxes_include_only_the_centers_inside() -> None:
+    masks = _segment((6, 8), [[1.5, 0.5, 3.4, 2.6]])
+
+    expected = np.zeros((6, 8), bool)
+    expected[1:3, 2:4] = True
+    np.testing.assert_array_equal(masks[0], expected)
+
+
+def test_boxes_are_clipped_at_the_image_border() -> None:
+    masks = _segment((4, 5), [[-3.0, -2.0, 1.0, 1.0], [3.0, 2.0, 99.0, 99.0]])
+
+    first = np.zeros((4, 5), bool)
+    first[:2, :2] = True
+    second = np.zeros((4, 5), bool)
+    second[2:, 3:] = True
+    np.testing.assert_array_equal(masks[0], first)
+    np.testing.assert_array_equal(masks[1], second)
+
+
+def test_a_box_between_pixel_centers_gives_an_empty_mask() -> None:
+    assert not _segment((4, 4), [[1.2, 1.2, 1.8, 1.8]]).any()
+
+
+def test_a_box_outside_the_image_gives_an_empty_mask() -> None:
+    assert not _segment((4, 4), [[10.0, 10.0, 12.0, 12.0]]).any()
+
+
+def test_masks_follow_the_prompt_order() -> None:
+    masks = _segment((4, 4), [[0.0, 0.0, 0.0, 0.0], [3.0, 3.0, 3.0, 3.0]])
+
+    assert masks[0, 0, 0] and masks[0].sum() == 1
+    assert masks[1, 3, 3] and masks[1].sum() == 1
+
+
+def test_no_boxes_give_an_empty_stack() -> None:
+    assert _segment((4, 5), []).shape == (0, 4, 5)
+
+
+def test_segment_and_unload_calls_are_counted() -> None:
+    segmenter = FakeMaskSegmenter()
+    image = np.zeros((4, 4, 3), np.uint8)
+    boxes = np.zeros((1, 4), np.float64)
+
+    segmenter.segment(image, boxes, None)
+    segmenter.segment(image, boxes, None)
+    segmenter.unload()
+
+    assert len(segmenter.calls) == 2
+    assert segmenter.unload_count == 1
+
+
+def test_the_prompts_of_each_call_are_recorded() -> None:
+    segmenter = FakeMaskSegmenter()
+    image = np.zeros((4, 4, 3), np.uint8)
+    boxes = np.array([[0.0, 0.0, 1.0, 1.0]])
+    points = np.array([[0.5, 0.5]])
+
+    segmenter.segment(image, boxes, points)
+
+    ((got_image, got_boxes, got_points),) = segmenter.calls
+    assert got_image is image
+    np.testing.assert_array_equal(got_boxes, boxes)
+    np.testing.assert_array_equal(got_points, points)
+
+
+def test_the_segmenter_rejects_an_invalid_prompt_and_records_nothing() -> None:
+    segmenter = FakeMaskSegmenter()
+    image = np.zeros((4, 4, 3), np.uint8)
+
+    with pytest.raises(ValueError, match="boxes"):
+        segmenter.segment(image, np.array([[3.0, 0.0, 1.0, 1.0]]), None)
+
+    assert segmenter.calls == []

@@ -109,7 +109,9 @@ class MaskSegmenter(Unloadable, Protocol):
                 one per box, as ``(x, y)``.
 
         Returns:
-            ``(K, H, W)`` boolean masks, one per box, in prompt order.
+            ``(K, H, W)`` boolean masks, one per box, in prompt order;
+            ``(0, H, W)`` for no boxes. Pixel centers lie at integer
+            coordinates.
         """
         ...
 

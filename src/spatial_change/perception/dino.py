@@ -13,6 +13,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from spatial_change.perception.loading import (
+    inference_context,
+    load_with_fallback,
+)
 from spatial_change.perception.padding import check_image, pad_to_patches
 
 DINOV3_MODEL_ID = "facebook/dinov3-vits16-pretrain-lvd1689m"
@@ -120,14 +124,7 @@ class DinoFeatureEncoder:
         mean = torch.tensor(_IMAGENET_MEAN, device=device).view(3, 1, 1)
         std = torch.tensor(_IMAGENET_STD, device=device).view(3, 1, 1)
         batch = ((pixels - mean) / std).unsqueeze(0)
-        with (
-            torch.inference_mode(),
-            torch.autocast(
-                device.type,
-                dtype=torch.bfloat16,
-                enabled=device.type == "cuda",
-            ),
-        ):
+        with inference_context(device):
             tokens = model(pixel_values=batch).last_hidden_state
         prefix = 1 + int(getattr(model.config, "num_register_tokens", 0))
         grid = tokens[0, prefix:].float().reshape(rows, cols, -1)
@@ -146,21 +143,11 @@ class DinoFeatureEncoder:
         """
         if self._model is not None:
             return
-        config = self._config
-        try:
-            model = self._from_pretrained(config.model_id)
-            loaded_id = config.model_id
-        except OSError:
-            if config.fallback_model_id is None:
-                raise
-            try:
-                model = self._from_pretrained(config.fallback_model_id)
-            except OSError as error:
-                raise OSError(
-                    f"could not load {config.model_id} or the fallback "
-                    f"{config.fallback_model_id}"
-                ) from error
-            loaded_id = config.fallback_model_id
+        model, loaded_id = load_with_fallback(
+            self._config.model_id,
+            self._config.fallback_model_id,
+            self._from_pretrained,
+        )
         self._model = model
         self._loaded_id = loaded_id
 
