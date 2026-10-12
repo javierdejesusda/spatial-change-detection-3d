@@ -14,7 +14,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-_NOMINAL_FPS = 30.0
+NOMINAL_FPS = 30.0
+"""Frame rate assumed when a container reports none."""
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,7 @@ def read_frames(
     with _capture(path) as cap:
         # Damaged or variable-rate files can report 0 fps; phone video is
         # nominally 30 fps.
-        fps = float(cap.get(cv2.CAP_PROP_FPS)) or _NOMINAL_FPS
+        fps = float(cap.get(cv2.CAP_PROP_FPS)) or NOMINAL_FPS
         yielded = 0
         for index in itertools.count():
             if max_frames is not None and yielded >= max_frames:

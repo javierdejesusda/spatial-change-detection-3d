@@ -20,6 +20,7 @@ from numpy.typing import ArrayLike, NDArray
 from spatial_change.domain.camera import Epoch, Frame
 from spatial_change.domain.transforms import (
     SE3,
+    Sim3,
     as_frozen_array,
     as_rotation,
     check_array,
@@ -63,6 +64,28 @@ class EpochReconstruction:
             raise ValueError("points, colors, and confidence lengths differ")
         if any(frame.epoch != self.epoch for frame in self.frames):
             raise ValueError(f"all frames must belong to epoch {self.epoch}")
+
+    def transformed(self, world_from_world: Sim3) -> EpochReconstruction:
+        """Re-expresses the epoch in another world frame.
+
+        Args:
+            world_from_world: Similarity from the current world to the
+                target world.
+
+        Returns:
+            A new reconstruction with its points, poses, and depth moved
+            (see ``Frame.transformed``); colors, confidences, images, and
+            intrinsics are shared with this one.
+        """
+        return EpochReconstruction(
+            epoch=self.epoch,
+            frames=[
+                frame.transformed(world_from_world) for frame in self.frames
+            ],
+            points=world_from_world.apply(self.points),
+            colors=self.colors,
+            confidence=self.confidence,
+        )
 
 
 @dataclass(frozen=True, eq=False)

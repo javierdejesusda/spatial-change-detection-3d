@@ -1,3 +1,4 @@
+import dataclasses
 import itertools
 
 import numpy as np
@@ -12,6 +13,7 @@ from spatial_change.domain import (
     Intrinsics,
     ObjectInstance,
     OrientedBox,
+    Sim3,
 )
 
 
@@ -168,3 +170,30 @@ def test_object_instance_defaults_and_validation() -> None:
     assert obj.feature is None
     with pytest.raises(ValueError):
         ObjectInstance("x", Epoch.AFTER, np.zeros((3, 2)), box)
+
+
+def test_transforming_an_epoch_moves_points_poses_and_depth_together() -> None:
+    depth = np.full((2, 2), 3.0, np.float32)
+    frame = dataclasses.replace(_frame(Epoch.BEFORE), depth=depth)
+    colors = np.zeros((2, 3), np.uint8)
+    recon = EpochReconstruction(
+        epoch=Epoch.BEFORE,
+        frames=[frame],
+        points=np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 1.0]]),
+        colors=colors,
+        confidence=np.ones(2, np.float32),
+    )
+    world = Sim3(2.0, rotation_z(90.0), np.array([1.0, 2.0, 3.0]))
+
+    moved = recon.transformed(world)
+
+    np.testing.assert_allclose(moved.points, world.apply(recon.points))
+    np.testing.assert_allclose(
+        moved.frames[0].world_from_camera.translation,
+        world.transform_pose(frame.world_from_camera).translation,
+    )
+    assert moved.frames[0].depth is not None
+    np.testing.assert_allclose(moved.frames[0].depth, 2.0 * depth)
+    assert moved.colors is colors
+    assert moved.epoch is Epoch.BEFORE
+    assert recon.frames[0] is frame
