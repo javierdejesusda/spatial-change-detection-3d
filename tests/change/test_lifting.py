@@ -29,7 +29,7 @@ from spatial_change.geometry import (
     usable_pixels,
     visible_points,
 )
-from spatial_change.geometry.projection import DEFAULT_MIN_CONFIDENCE
+from spatial_change.geometry.views import ViewConfig
 
 TALL = Cuboid((-0.5, -0.5, 0.0), (0.5, 0.5, 1.0))
 LOW = Cuboid((1.2, -0.3, 0.0), (1.6, 0.3, 0.4))
@@ -55,9 +55,13 @@ def visible_counts(
 ) -> list[int]:
     counts = []
     for frame in scene.frames:
-        usable = usable_pixels(frame, config.min_confidence)
+        usable = usable_pixels(frame, config.views.min_confidence)
         seen = visible_points(
-            points, frame, usable, config.abs_tolerance, config.rel_tolerance
+            points,
+            frame,
+            usable,
+            config.views.abs_tolerance,
+            config.views.rel_tolerance,
         )
         counts.append(len(seen.indices))
     return counts
@@ -69,39 +73,16 @@ def called_frames(scene: HandScene, segmenter: OracleSegmenter) -> list[int]:
     return [by_image[id(image)] for image, _, _ in segmenter.calls]
 
 
-def test_config_defaults() -> None:
-    config = LiftConfig()
-
-    assert config.max_views == 5
-    assert config.min_visible_points == 10
-    assert config.box_margin_px == 4.0
-    assert config.abs_tolerance == 0.05
-    assert config.rel_tolerance == 0.02
-    assert config.min_confidence == DEFAULT_MIN_CONFIDENCE
-    assert config.voxel_size == 0.05
-    assert config.min_agreement == 0.5
-    assert config.min_points == 10
-    assert config.merge_overlap == 0.5
-    assert config.link_radius == 2
-    assert config.floor_clearance == 0.02
-
-
 def test_config_is_frozen() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
-        LiftConfig().max_views = 1  # type: ignore[misc]
+        LiftConfig().box_margin_px = 1.0  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"max_views": 0},
-        {"min_visible_points": 0},
         {"box_margin_px": -1.0},
         {"box_margin_px": float("nan")},
-        {"abs_tolerance": 0.0},
-        {"abs_tolerance": float("inf")},
-        {"rel_tolerance": -0.1},
-        {"min_confidence": 1.5},
         {"voxel_size": 0.0},
         {"voxel_size": float("inf")},
         {"min_agreement": -0.1},
@@ -123,7 +104,7 @@ def test_config_rejects_invalid_values(overrides: dict[str, Any]) -> None:
 def test_views_are_the_frames_that_see_most_candidate_points() -> None:
     scene = ring_scene()
     points = scene.object_points(0, [0])
-    config = LiftConfig(max_views=3)
+    config = LiftConfig(views=ViewConfig(max_views=3))
     counts = visible_counts(scene, points, config)
     expected = sorted(np.argsort(counts, kind="stable")[::-1][:3].tolist())
     segmenter = scene.segmenter()
@@ -145,7 +126,7 @@ def test_ties_between_frames_go_to_the_earlier_frame() -> None:
         scene.reconstruction(),
         (candidate_of(points),),
         segmenter,
-        LiftConfig(max_views=1),
+        LiftConfig(views=ViewConfig(max_views=1)),
     )
 
     assert called_frames(scene, segmenter) == [0]
@@ -154,7 +135,7 @@ def test_ties_between_frames_go_to_the_earlier_frame() -> None:
 def test_frames_seeing_too_few_candidate_points_are_skipped() -> None:
     scene = ring_scene()
     points = scene.object_points(0, [0])
-    base = LiftConfig(max_views=6)
+    base = LiftConfig(views=ViewConfig(max_views=6))
     counts = visible_counts(scene, points, base)
     threshold = sorted(counts)[-2]
     expected = {i for i, count in enumerate(counts) if count >= threshold}
@@ -165,7 +146,10 @@ def test_frames_seeing_too_few_candidate_points_are_skipped() -> None:
         scene.reconstruction(),
         (candidate_of(points),),
         segmenter,
-        dataclasses.replace(base, min_visible_points=threshold),
+        dataclasses.replace(
+            base,
+            views=dataclasses.replace(base.views, min_visible_points=threshold),
+        ),
     )
 
     assert set(called_frames(scene, segmenter)) == expected
@@ -174,7 +158,7 @@ def test_frames_seeing_too_few_candidate_points_are_skipped() -> None:
 def test_a_frame_that_cannot_see_the_candidate_is_not_selected() -> None:
     scene = ring_scene()
     points = scene.object_points(1, [0])
-    config = LiftConfig(max_views=6)
+    config = LiftConfig(views=ViewConfig(max_views=6))
     counts = visible_counts(scene, points, config)
     assert counts[3] == 0 and counts[0] > 0
     segmenter = scene.segmenter()
@@ -191,9 +175,13 @@ def _prompt_pixels(
     scene: HandScene, points: NDArray[np.float64], config: LiftConfig
 ) -> NDArray[np.intp]:
     frame = scene.frames[0]
-    usable = usable_pixels(frame, config.min_confidence)
+    usable = usable_pixels(frame, config.views.min_confidence)
     seen = visible_points(
-        points, frame, usable, config.abs_tolerance, config.rel_tolerance
+        points,
+        frame,
+        usable,
+        config.views.abs_tolerance,
+        config.views.rel_tolerance,
     )
     return seen.pixels
 
@@ -204,7 +192,7 @@ def test_the_box_is_the_visible_pixels_grown_by_the_margin(
 ) -> None:
     scene = ring_scene()
     points = scene.object_points(0, [0])
-    config = LiftConfig(max_views=1, box_margin_px=margin)
+    config = LiftConfig(views=ViewConfig(max_views=1), box_margin_px=margin)
     pixels = _prompt_pixels(scene, points, config)
     segmenter = scene.segmenter()
 
@@ -232,7 +220,7 @@ def test_the_box_is_clipped_to_the_image() -> None:
         scene.reconstruction(),
         (candidate_of(points),),
         segmenter,
-        LiftConfig(max_views=1, box_margin_px=1000.0),
+        LiftConfig(views=ViewConfig(max_views=1), box_margin_px=1000.0),
     )
 
     (_, boxes, _) = segmenter.calls[0]
@@ -242,7 +230,7 @@ def test_the_box_is_clipped_to_the_image() -> None:
 def test_the_point_is_the_visible_pixel_nearest_to_their_median() -> None:
     scene = ring_scene()
     points = scene.object_points(0, [0])
-    config = LiftConfig(max_views=1)
+    config = LiftConfig(views=ViewConfig(max_views=1))
     pixels = _prompt_pixels(scene, points, config)
     median = np.median(pixels, axis=0)
     segmenter = scene.segmenter()
@@ -271,7 +259,7 @@ def test_each_frame_is_segmented_once_with_all_its_candidates() -> None:
         scene.reconstruction(),
         (tall, low),
         segmenter,
-        LiftConfig(max_views=6),
+        LiftConfig(views=ViewConfig(max_views=6)),
     )
 
     frames = called_frames(scene, segmenter)
@@ -294,7 +282,7 @@ def test_a_candidate_without_views_keeps_its_own_points() -> None:
         scene.reconstruction(),
         (candidate_of(points, "before-7"),),
         segmenter,
-        LiftConfig(min_visible_points=10**9),
+        LiftConfig(views=ViewConfig(min_visible_points=10**9)),
     )
 
     assert segmenter.calls == []
@@ -342,7 +330,7 @@ def test_lifted_objects_hold_both_directions() -> None:
         after.reconstruction(),
         ChangeCandidates((disappeared,), (appeared,)),
         segmenter,
-        LiftConfig(max_views=1),
+        LiftConfig(views=ViewConfig(max_views=1)),
     )
 
     assert isinstance(lifted, LiftedObjects)
@@ -463,7 +451,7 @@ def stray(
 def test_masks_lift_to_more_of_the_object_than_the_candidate_has() -> None:
     scene = ring_scene()
     points = scene.object_points(0, [0])
-    config = LiftConfig(max_views=5)
+    config = LiftConfig(views=ViewConfig(max_views=5))
 
     (instance,) = lift_candidates(
         scene.reconstruction(),
@@ -484,7 +472,7 @@ def test_consensus_drops_voxels_that_only_one_mask_includes() -> None:
     points = scene.object_points(0, [0])
     reconstruction = scene.reconstruction()
     bleeding = BleedSegmenter(scene.segmenter(), scene.frames[0].image, 6)
-    config = LiftConfig(max_views=5, floor_clearance=0.0)
+    config = LiftConfig(views=ViewConfig(max_views=5), floor_clearance=0.0)
     unchecked = dataclasses.replace(config, min_agreement=0.0)
 
     (agreed,) = lift_candidates(
@@ -570,7 +558,7 @@ def test_spill_far_from_the_object_is_dropped() -> None:
         scene.reconstruction(),
         (candidate_of(points),),
         spill,
-        LiftConfig(max_views=1),
+        LiftConfig(views=ViewConfig(max_views=1)),
     )
 
     assert outside(instance.points, TALL, 0.2) == 0
@@ -591,7 +579,7 @@ def test_masks_that_miss_the_candidate_fall_back_to_its_points() -> None:
         scene.reconstruction(),
         (candidate_of(points),),
         only_spill,
-        LiftConfig(max_views=1),
+        LiftConfig(views=ViewConfig(max_views=1)),
     )
 
     np.testing.assert_array_equal(instance.points, points)
@@ -600,7 +588,9 @@ def test_masks_that_miss_the_candidate_fall_back_to_its_points() -> None:
 def test_voxels_that_straddle_an_edge_are_judged_at_their_points() -> None:
     scene = ring_scene()
     points = scene.object_points(0)
-    tight = LiftConfig(max_views=6, abs_tolerance=0.002, rel_tolerance=0.0)
+    tight = LiftConfig(
+        views=ViewConfig(max_views=6, abs_tolerance=0.002, rel_tolerance=0.0)
+    )
 
     (instance,) = lift_candidates(
         scene.reconstruction(),
@@ -633,7 +623,7 @@ def test_a_view_does_not_confirm_its_own_bleed() -> None:
         scene.reconstruction(),
         (candidate_of(points),),
         bleeding,
-        LiftConfig(max_views=2),
+        LiftConfig(views=ViewConfig(max_views=2)),
     )
 
     assert sorted(called_frames(scene, oracle)) == [0, 1]
@@ -814,7 +804,7 @@ def test_floor_spill_beside_the_object_is_dropped() -> None:
             for f in scene.frames
         },
     )
-    config = LiftConfig(max_views=6)
+    config = LiftConfig(views=ViewConfig(max_views=6))
     unclipped = dataclasses.replace(config, floor_clearance=0.0)
 
     (instance,) = lift_candidates(
@@ -835,7 +825,7 @@ def test_floor_spill_beside_the_object_is_dropped() -> None:
 def test_the_floor_contact_of_the_candidate_is_kept() -> None:
     scene = ring_scene()
     points = scene.object_points(0)
-    config = LiftConfig(max_views=6, floor_clearance=0.05)
+    config = LiftConfig(views=ViewConfig(max_views=6), floor_clearance=0.05)
     unclipped = dataclasses.replace(config, floor_clearance=0.0)
 
     (instance,) = lift_candidates(

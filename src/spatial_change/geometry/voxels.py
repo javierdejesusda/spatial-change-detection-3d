@@ -26,6 +26,20 @@ def voxel_cells(
     return np.floor(points / voxel_size).astype(np.int64)
 
 
+def cube_offsets(radius: int) -> NDArray[np.int64]:
+    """Lists every neighbour offset within a radius, zero included.
+
+    Args:
+        radius: Largest absolute offset per axis.
+
+    Returns:
+        Array of shape ``((2r + 1)^3, 3)`` in key order.
+    """
+    span = np.arange(-radius, radius + 1)
+    grid = np.stack(np.meshgrid(span, span, span, indexing="ij"), axis=-1)
+    return grid.reshape(-1, 3)
+
+
 def _forward_offsets(radius: int) -> NDArray[np.int64]:
     """Lists the neighbour offsets that come after zero in key order.
 
@@ -36,9 +50,26 @@ def _forward_offsets(radius: int) -> NDArray[np.int64]:
         Array of shape ``(((2r + 1)^3 - 1) / 2, 3)``: one offset of every
         opposite pair, so each neighbouring pair is visited once.
     """
-    span = np.arange(-radius, radius + 1)
-    grid = np.stack(np.meshgrid(span, span, span, indexing="ij"), axis=-1)
-    return grid.reshape(-1, 3)[(2 * radius + 1) ** 3 // 2 + 1 :]
+    return cube_offsets(radius)[(2 * radius + 1) ** 3 // 2 + 1 :]
+
+
+def pack_cells(cells: NDArray[np.int64]) -> NDArray[np.int64]:
+    """Folds every voxel key into one linear key.
+
+    Args:
+        cells: Voxel keys of shape ``(N, 3)``, at least one row.
+
+    Returns:
+        Array of shape ``(N,)``: equal keys for equal rows, ordered like the
+        rows.
+
+    Raises:
+        ValueError: If the keys span more voxels than a 64-bit key can
+            index.
+    """
+    origin, _, dims = voxel_grid(cells, 0)
+    keys = np.ravel_multi_index((cells - np.array(origin, np.int64)).T, dims)
+    return np.asarray(keys, np.int64)
 
 
 def lookup_keys(

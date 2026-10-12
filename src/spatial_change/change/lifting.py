@@ -30,11 +30,16 @@ from spatial_change.geometry import (
     voxel_cells,
 )
 from spatial_change.geometry.projection import (
-    DEFAULT_MIN_CONFIDENCE,
     VisiblePoints,
     unproject_depth,
-    usable_pixels,
     visible_points,
+)
+from spatial_change.geometry.views import (
+    UsableFrame,
+    ViewConfig,
+    pixel_box,
+    select_views,
+    usable_frames,
 )
 from spatial_change.geometry.voxels import lookup_keys, voxel_grid
 from spatial_change.ports import MaskSegmenter
@@ -49,17 +54,9 @@ class LiftConfig:
     stage.
 
     Attributes:
-        max_views: Frames used per candidate, at least 1.
-        min_visible_points: Candidate points a frame must see to be used,
-            at least 1.
+        views: How the frames of a candidate are picked.
         box_margin_px: Pixels added on every side of the box prompt, at
             least 0 and finite.
-        abs_tolerance: Depth tolerance at zero depth of the visibility
-            test, positive and finite.
-        rel_tolerance: Extra tolerance per unit of depth, at least 0 and
-            finite.
-        min_confidence: Pixels with a lower confidence give no view and no
-            lifted point, in ``[0, 1]``.
         voxel_size: Edge of the voxels of the consensus and of the merge,
             positive and finite.
         min_agreement: Share of the views that see a voxel and did not lift
@@ -81,12 +78,8 @@ class LiftConfig:
             still drops the points below the floor.
     """
 
-    max_views: int = 5
-    min_visible_points: int = 10
+    views: ViewConfig = ViewConfig()
     box_margin_px: float = 4.0
-    abs_tolerance: float = 0.05
-    rel_tolerance: float = 0.02
-    min_confidence: float = DEFAULT_MIN_CONFIDENCE
     voxel_size: float = 0.05
     min_agreement: float = 0.5
     min_points: int = 10
@@ -101,18 +94,8 @@ class LiftConfig:
             ValueError: If a count is below 1, a length is out of range or
                 not finite, or a share is outside its interval.
         """
-        if self.max_views < 1:
-            raise ValueError("max_views must be >= 1")
-        if self.min_visible_points < 1:
-            raise ValueError("min_visible_points must be >= 1")
         if not 0.0 <= self.box_margin_px < math.inf:
             raise ValueError("box_margin_px must be >= 0 and finite")
-        if not 0.0 < self.abs_tolerance < math.inf:
-            raise ValueError("abs_tolerance must be positive and finite")
-        if not 0.0 <= self.rel_tolerance < math.inf:
-            raise ValueError("rel_tolerance must be >= 0 and finite")
-        if not 0.0 <= self.min_confidence <= 1.0:
-            raise ValueError("min_confidence must be within [0, 1]")
         if not 0.0 < self.voxel_size < math.inf:
             raise ValueError("voxel_size must be positive and finite")
         if not 0.0 <= self.min_agreement <= 1.0:
@@ -158,49 +141,8 @@ class _View:
     point: NDArray[np.float64]
 
 
-@dataclass(frozen=True, eq=False)
-class _UsableFrame:
-    """A frame that can give views.
-
-    Attributes:
-        frame: The frame, with image and depth.
-        image: The frame's ``(H, W, 3)`` image.
-        depth: The frame's ``(H, W)`` depth map.
-        usable: The frame's usable pixels.
-    """
-
-    frame: Frame
-    image: NDArray[np.uint8]
-    depth: NDArray[np.float32]
-    usable: NDArray[np.bool_]
-
-
-def _usable_frames(
-    reconstruction: EpochReconstruction, config: LiftConfig
-) -> dict[int, _UsableFrame]:
-    """Lists the frames that have an image and a depth map.
-
-    Args:
-        reconstruction: The epoch's reconstruction.
-        config: Supplies ``min_confidence``.
-
-    Returns:
-        The frames by their index in the reconstruction, in that order.
-    """
-    return {
-        position: _UsableFrame(
-            frame,
-            frame.image,
-            frame.depth,
-            usable_pixels(frame, config.min_confidence),
-        )
-        for position, frame in enumerate(reconstruction.frames)
-        if frame.image is not None and frame.depth is not None
-    }
-
-
 def _seen(
-    points: NDArray[np.float64], item: _UsableFrame, config: LiftConfig
+    points: NDArray[np.float64], item: UsableFrame, config: LiftConfig
 ) -> VisiblePoints:
     """Finds the points a frame sees on its depth surface.
 
@@ -216,8 +158,8 @@ def _seen(
         points,
         item.frame,
         item.usable,
-        config.abs_tolerance,
-        config.rel_tolerance,
+        config.views.abs_tolerance,
+        config.views.rel_tolerance,
     )
 
 
@@ -240,17 +182,19 @@ def _prompt(
         The box of the pixels grown by the margin and clipped to the image,
         and the pixel nearest to their median.
     """
-    low = pixels.min(axis=0) - config.box_margin_px
-    high = pixels.max(axis=0) + config.box_margin_px
-    limit = np.array([frame.intrinsics.width - 1, frame.intrinsics.height - 1])
-    box = np.concatenate([np.maximum(low, 0.0), np.minimum(high, limit)])
+    box = pixel_box(
+        pixels,
+        config.box_margin_px,
+        frame.intrinsics.width,
+        frame.intrinsics.height,
+    )
     distance = np.linalg.norm(pixels - np.median(pixels, axis=0), axis=1)
     return _View(position, box, pixels[np.argmin(distance)].astype(np.float64))
 
 
 def _select_views(
     candidate: Candidate,
-    frames: dict[int, _UsableFrame],
+    frames: dict[int, UsableFrame],
     config: LiftConfig,
 ) -> list[_View]:
     """Picks the frames that see a candidate best and prompts them.
@@ -264,29 +208,17 @@ def _select_views(
         Up to ``max_views`` views in frame order, the frames that see the
         most candidate points first chosen, ties to the earlier frame.
     """
-    positions = list(frames)
-    counts = np.array(
-        [
-            len(_seen(candidate.points, frames[position], config).indices)
-            for position in positions
-        ]
-    )
-    ranked = np.argsort(-counts, kind="stable")
-    chosen = sorted(
-        int(i)
-        for i in ranked[: config.max_views]
-        if counts[i] >= config.min_visible_points
-    )
-    views = []
-    for i in chosen:
-        item = frames[positions[i]]
-        pixels = _seen(candidate.points, item, config).pixels
-        views.append(_prompt(positions[i], pixels, item.frame, config))
-    return views
+    selected = select_views(candidate.points, frames, config.views)
+    return [
+        _prompt(
+            view.position, view.seen.pixels, frames[view.position].frame, config
+        )
+        for view in selected
+    ]
 
 
 def _segment_views(
-    frames: dict[int, _UsableFrame],
+    frames: dict[int, UsableFrame],
     views: list[list[_View]],
     segmenter: MaskSegmenter,
 ) -> dict[tuple[int, int], NDArray[np.bool_]]:
@@ -377,7 +309,7 @@ def _agreed_voxels(
     owner: NDArray[np.intp],
     views: list[_View],
     masks: list[NDArray[np.bool_]],
-    frames: dict[int, _UsableFrame],
+    frames: dict[int, UsableFrame],
     own: NDArray[np.int64],
     config: LiftConfig,
 ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
@@ -456,7 +388,7 @@ def _lift(
     candidate: Candidate,
     views: list[_View],
     masks: list[NDArray[np.bool_]],
-    frames: dict[int, _UsableFrame],
+    frames: dict[int, UsableFrame],
     config: LiftConfig,
 ) -> _Lifted:
     """Lifts the masks of a candidate and keeps what the views agree on.
@@ -640,7 +572,7 @@ def lift_candidates(
     _check_epoch(reconstruction, candidates)
     if not candidates:
         return ()
-    frames = _usable_frames(reconstruction, config)
+    frames = usable_frames(reconstruction, config.views.min_confidence)
     views = [_select_views(c, frames, config) for c in candidates]
     masks = _segment_views(frames, views, segmenter)
     lifted = [

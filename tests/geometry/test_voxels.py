@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from spatial_change.geometry import label_voxel_cells, voxel_cells
+from spatial_change.geometry.voxels import cube_offsets, pack_cells
 
 
 def test_points_map_to_the_voxel_that_contains_them() -> None:
@@ -74,3 +75,37 @@ def test_cells_beyond_float_precision_are_labelled_exactly() -> None:
 
     assert labels[0] == labels[1]
     assert labels[2] != labels[0]
+
+
+def test_cube_offsets_list_every_offset_once_in_key_order() -> None:
+    offsets = cube_offsets(1)
+
+    assert offsets.shape == (27, 3)
+    assert offsets.dtype == np.int64
+    assert len({tuple(row) for row in offsets.tolist()}) == 27
+    assert offsets.min() == -1
+    assert offsets.max() == 1
+    assert offsets.tolist() == sorted(offsets.tolist())
+
+
+def test_packed_cells_are_equal_exactly_for_equal_rows_in_row_order() -> None:
+    cells = np.array(
+        [[3, -1, 0], [0, 0, 0], [3, -1, 0], [-2, 5, 1], [0, 0, 1]], np.int64
+    )
+
+    keys = pack_cells(cells)
+
+    assert keys.dtype == np.int64
+    assert keys[0] == keys[2]
+    assert len(np.unique(keys)) == 4
+    rows = [tuple(row) for row in cells.tolist()]
+    assert np.argsort(keys, kind="stable").tolist() == sorted(
+        range(5), key=lambda i: (rows[i], i)
+    )
+
+
+def test_packing_cells_that_span_too_many_voxels_is_an_error() -> None:
+    cells = np.array([[0, 0, 0], [10**7, 10**7, 10**7]], np.int64)
+
+    with pytest.raises(ValueError, match="voxel"):
+        pack_cells(cells)
