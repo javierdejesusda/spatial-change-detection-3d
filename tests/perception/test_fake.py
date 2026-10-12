@@ -3,6 +3,7 @@ import pytest
 from numpy.typing import NDArray
 
 from spatial_change.perception.fake import (
+    FAKE_ENCODER_ID,
     FakeFeatureEncoder,
     FakeLabeler,
     FakeMaskSegmenter,
@@ -371,3 +372,7 @@ def test_fake_vlm_counts_unloads() -> None:
     vlm.unload()
 
     assert vlm.unload_count == 2
+
+
+def test_fake_encoder_reports_the_id_it_loaded() -> None:
+    assert FakeFeatureEncoder().loaded_model_id == FAKE_ENCODER_ID

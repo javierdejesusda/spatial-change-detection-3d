@@ -157,6 +157,15 @@ class FeatureEncoder(Unloadable, Protocol):
     """Computes dense patch features for appearance comparison."""
 
     @property
+    def loaded_model_id(self) -> str | None:
+        """Identifier of the weights that are loaded, ``None`` if none.
+
+        It names the weights that produce the features, which can differ
+        from the ones asked for when the encoder falls back to others.
+        """
+        ...
+
+    @property
     def patch_size(self) -> int:
         """Side length in input pixels of the square patch per feature."""
         ...

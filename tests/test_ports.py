@@ -56,6 +56,10 @@ class FakeMaskSegmenter:
 
 class FakeFeatureEncoder:
     @property
+    def loaded_model_id(self) -> str | None:
+        return None
+
+    @property
     def patch_size(self) -> int:
         return 14
 

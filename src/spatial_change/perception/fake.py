@@ -11,6 +11,9 @@ from spatial_change.perception.prompts import (
     check_prompts,
 )
 
+FAKE_ENCODER_ID = "fake-encoder"
+"""The weights id a ``FakeFeatureEncoder`` reports as loaded."""
+
 
 class FakeFeatureEncoder:
     """Encodes each patch as the unit direction of its mean color.
@@ -39,6 +42,11 @@ class FakeFeatureEncoder:
         self._patch_size = patch_size
         self.encode_count = 0
         self.unload_count = 0
+
+    @property
+    def loaded_model_id(self) -> str:
+        """The id of the weights this encoder stands in for."""
+        return FAKE_ENCODER_ID
 
     @property
     def patch_size(self) -> int:
