@@ -227,3 +227,21 @@ def test_box_model_rejects_invalid_box() -> None:
             extent=(1.0, 0.0, 1.0),
             rotation=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         )
+
+
+def test_duplicate_change_ids_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="c0"):
+        ChangeReport(
+            changes=[_change(), _change()],
+            unobserved_regions=[],
+            metadata={},
+        )
+
+
+def test_duplicate_region_ids_are_rejected() -> None:
+    region = UnobservedRegion(region_id="u0", box=_BOX, epoch_seen="before")
+
+    with pytest.raises(ValidationError, match="u0"):
+        ChangeReport(
+            changes=[], unobserved_regions=[region, region], metadata={}
+        )

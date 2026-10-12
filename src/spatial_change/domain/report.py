@@ -179,8 +179,9 @@ class ChangeReport(_ReportModel):
 
     Attributes:
         schema_version: Report schema version, always ``"1"``.
-        changes: Detected changes.
-        unobserved_regions: Regions that cannot be judged.
+        changes: Detected changes, with distinct ids.
+        unobserved_regions: Regions that cannot be judged, with distinct
+            ids.
         metadata: Flat run information such as frame counts and settings.
     """
 
@@ -188,6 +189,17 @@ class ChangeReport(_ReportModel):
     changes: list[Change]
     unobserved_regions: list[UnobservedRegion]
     metadata: dict[str, str | int | float | bool]
+
+    @model_validator(mode="after")
+    def _check_unique_ids(self) -> ChangeReport:
+        for kind, ids in (
+            ("change", [c.change_id for c in self.changes]),
+            ("region", [r.region_id for r in self.unobserved_regions]),
+        ):
+            repeated = sorted({i for i in ids if ids.count(i) > 1})
+            if repeated:
+                raise ValueError(f"duplicate {kind} ids: {repeated}")
+        return self
 
     def to_json(self) -> str:
         """Serializes the report as JSON indented by 2 spaces."""
