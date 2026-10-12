@@ -1,0 +1,216 @@
+"""The settings of a run and the stage configs they stand for.
+
+A ``RunConfig`` holds the few knobs a user may turn. ``build_stage_configs``
+turns it into the frozen config of every stage; whatever a knob does not
+name keeps the default of its stage.
+
+Importing this module does not load torch, transformers, open3d, or cv2.
+"""
+
+import json
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any, Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from spatial_change.alignment import RefineConfig
+from spatial_change.change import (
+    AppearanceConfig,
+    CandidateConfig,
+    DescriptorConfig,
+    LiftConfig,
+    MatchConfig,
+    UnobservedConfig,
+)
+from spatial_change.geometry import FloorConfig
+from spatial_change.geometry.projection import DEFAULT_MIN_CONFIDENCE
+from spatial_change.geometry.walls import WallConfig
+from spatial_change.semantics import (
+    LabelConfig,
+    LandmarkConfig,
+    RelationConfig,
+)
+from spatial_change.visibility import VisibilityConfig
+from spatial_change.visualization import RerunConfig
+
+BACKBONE_MULTIPLE = 14
+"""Both sides of a frame are rounded to a multiple of the ViT patch size."""
+MAX_VIDEO_KEYFRAMES = 64
+"""Half the views the reconstruction accepts, so both videos fit in one."""
+MIN_KEYFRAMES = 8
+"""Keyframes a video is topped up to when enough sharp frames exist."""
+
+
+class RunConfig(BaseModel):
+    """The knobs of a run.
+
+    Attributes:
+        sample_fps: Frames per second taken from each video before the
+            keyframes are chosen, positive.
+        max_keyframes: Keyframes kept per video, from 2 to
+            ``MAX_VIDEO_KEYFRAMES``.
+        backbone_long_side: Longest side in pixels of the frames given to
+            the reconstruction, a multiple of 14.
+        voxel_size: Edge in meters of the voxels that thin each epoch's
+            fused cloud, or ``None`` to keep every point.
+        describer: ``vlm`` writes the descriptions with the local
+            vision-language model, ``template`` with the deterministic
+            template, and ``auto`` picks ``vlm`` on a CUDA device and
+            ``template`` otherwise.
+        device: The torch device of the models, or ``auto`` for CUDA when
+            there is one and the CPU otherwise.
+        seed: Seed of every random search and subsampling, at least 0.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sample_fps: float = Field(default=5.0, gt=0.0, allow_inf_nan=False)
+    max_keyframes: int = Field(default=48, ge=2, le=MAX_VIDEO_KEYFRAMES)
+    backbone_long_side: int = Field(default=518, ge=BACKBONE_MULTIPLE)
+    voxel_size: float | None = Field(default=0.02, gt=0.0, allow_inf_nan=False)
+    describer: Literal["auto", "vlm", "template"] = "auto"
+    device: str = Field(default="auto", min_length=1)
+    seed: int = Field(default=0, ge=0)
+
+    @field_validator("backbone_long_side")
+    @classmethod
+    def _multiple_of_patch(cls, value: int) -> int:
+        if value % BACKBONE_MULTIPLE:
+            raise ValueError(
+                f"backbone_long_side must be a multiple of {BACKBONE_MULTIPLE}"
+            )
+        return value
+
+    @classmethod
+    def load(cls, path: Path | None = None, **overrides: Any) -> Self:
+        """Reads a JSON config file and applies overrides on top of it.
+
+        Args:
+            path: The file, or ``None`` for the defaults.
+            **overrides: Field values that replace those of the file.
+
+        Returns:
+            The validated config.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the file is not a valid JSON object.
+            pydantic.ValidationError: If a value is invalid or a key is
+                unknown.
+        """
+        data: dict[str, Any] = {}
+        if path is not None:
+            if not path.is_file():
+                raise FileNotFoundError(f"config file not found: {path}")
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"{path} is not valid JSON: {error}"
+                ) from error
+            if not isinstance(data, dict):
+                raise ValueError(f"{path} must hold a JSON object")
+        return cls.model_validate({**data, **overrides})
+
+
+def resolve_device(config: RunConfig) -> str:
+    """Names the torch device a run uses.
+
+    Args:
+        config: The run settings.
+
+    Returns:
+        ``config.device``, or for ``auto`` ``cuda`` when torch sees a CUDA
+        device and ``cpu`` otherwise.
+    """
+    if config.device != "auto":
+        return config.device
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+@dataclass(frozen=True)
+class StageConfigs:
+    """The config of every stage of a run.
+
+    Attributes:
+        sample_fps: Frames per second taken from each video.
+        max_keyframes: Keyframes kept per video.
+        backbone_long_side: Longest side of the frames given to the
+            reconstruction.
+        fusion_voxel_size: Voxel edge that thins a fused cloud, or ``None``.
+        min_confidence: Pixels with a lower confidence stay out of the
+            fused clouds.
+        floor: Floor search of the gravity alignment.
+        refine: Registration of the AFTER epoch onto the BEFORE epoch.
+        visibility: The visibility vote.
+        appearance: The appearance comparison.
+        candidates: The change candidates.
+        unobserved: The unobserved regions.
+        lift: The lifting of the candidates to objects.
+        descriptors: The appearance descriptors of the objects.
+        label: The labeling of the objects.
+        landmarks: The landmark search.
+        match: The association of the objects.
+        relation: The spatial facts of the changes.
+        rerun: The Rerun recording.
+    """
+
+    sample_fps: float
+    max_keyframes: int
+    backbone_long_side: int
+    fusion_voxel_size: float | None
+    min_confidence: float
+    floor: FloorConfig
+    refine: RefineConfig
+    visibility: VisibilityConfig
+    appearance: AppearanceConfig
+    candidates: CandidateConfig
+    unobserved: UnobservedConfig
+    lift: LiftConfig
+    descriptors: DescriptorConfig
+    label: LabelConfig
+    landmarks: LandmarkConfig
+    match: MatchConfig
+    relation: RelationConfig
+    rerun: RerunConfig
+
+
+def build_stage_configs(config: RunConfig, device: str) -> StageConfigs:
+    """Builds the config of every stage from the knobs of a run.
+
+    Args:
+        config: The run settings.
+        device: The torch device of the visibility vote, as resolved by
+            ``resolve_device``.
+
+    Returns:
+        The stage configs.
+    """
+    seed = config.seed
+    landmarks = LandmarkConfig()
+    match = MatchConfig()
+    return StageConfigs(
+        sample_fps=config.sample_fps,
+        max_keyframes=config.max_keyframes,
+        backbone_long_side=config.backbone_long_side,
+        fusion_voxel_size=config.voxel_size,
+        min_confidence=DEFAULT_MIN_CONFIDENCE,
+        floor=replace(FloorConfig(), seed=seed),
+        refine=RefineConfig(),
+        visibility=VisibilityConfig(device=device),
+        appearance=AppearanceConfig(),
+        candidates=CandidateConfig(),
+        unobserved=UnobservedConfig(),
+        lift=LiftConfig(),
+        descriptors=DescriptorConfig(),
+        label=LabelConfig(),
+        landmarks=replace(landmarks, walls=replace(WallConfig(), seed=seed)),
+        match=replace(
+            match, registration=replace(match.registration, seed=seed)
+        ),
+        relation=RelationConfig(),
+        rerun=RerunConfig(seed=seed),
+    )
