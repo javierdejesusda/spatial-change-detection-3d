@@ -20,6 +20,8 @@ from http.client import IncompleteRead
 from pathlib import Path
 from typing import Literal
 
+from spatial_change.evaluation.scenediff import indoor_pairs
+
 SCENEDIFF_REVISION = "d9e2115fae13daf219ed547bfb072a875aae4d7c"
 SCENEDIFF_URL = (
     f"https://huggingface.co/datasets/yuqun/SceneDiff/resolve/{SCENEDIFF_REVISION}/"
@@ -383,4 +385,32 @@ def fetch_pairs(
         KeyError: If a pair is missing from the archive.
     """
     with open_remote_zip(url) as zf:
+        return [extract_pair(zf, pair, dest_root) for pair in pairs]
+
+
+def fetch_indoor_split(
+    split: Literal["val", "test"],
+    dest_root: Path,
+    *,
+    url: str = SCENEDIFF_URL,
+) -> list[Path]:
+    """Downloads the indoor pairs of a split.
+
+    Args:
+        split: ``val`` (28 pairs) or ``test`` (92 pairs).
+        dest_root: Directory that receives one folder per pair.
+        url: URL of the zip archive.
+
+    Returns:
+        The pair directories, in split order.
+
+    Raises:
+        RuntimeError: If the server does not support Range requests or an
+            HTTP request keeps failing.
+        ValueError: If a pair name is invalid or a member exceeds its size
+            limit.
+        KeyError: If a pair is missing from the archive.
+    """
+    with open_remote_zip(url) as zf:
+        pairs = indoor_pairs(load_split(zf, split))
         return [extract_pair(zf, pair, dest_root) for pair in pairs]
