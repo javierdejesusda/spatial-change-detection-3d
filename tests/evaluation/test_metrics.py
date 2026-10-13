@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -383,3 +385,20 @@ def test_video_index_must_be_one_or_two() -> None:
 def test_config_validation(kwargs: dict[str, float]) -> None:
     with pytest.raises(ValueError):
         EvalConfig(**kwargs)  # type: ignore[arg-type]
+
+
+def test_scenes_can_be_streamed_one_at_a_time() -> None:
+    a, b = box(0, 0), box(6, 6)
+    scenes = [
+        scene(
+            [gt(0, v1f0=a, v2f0=b)],
+            [pred(0, {"v1f0": (a, 0.9), "v2f0": (b, 0.7)})],
+            name="first",
+        ),
+        scene([gt(1, v1f0=a)], [pred(1, {"v1f0": (b, 0.4)})], name="second"),
+    ]
+
+    def stream() -> Iterator[SceneEval]:
+        yield from scenes
+
+    assert evaluate(stream()) == evaluate(scenes)

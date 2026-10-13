@@ -390,14 +390,15 @@ def _match_objects(
 
 
 def evaluate(
-    scenes: Sequence[SceneEval], config: EvalConfig | None = None
+    scenes: Iterable[SceneEval], config: EvalConfig | None = None
 ) -> Metrics:
     """Computes the SceneDiff metrics over a set of scenes.
 
     Args:
-        scenes: Scenes with ground truth and predictions. A scene without
-            ground truth still contributes its predictions as false
-            positives, as in the official evaluation.
+        scenes: Scenes with ground truth and predictions, read once and
+            only one at a time, so a generator keeps a split out of memory.
+            A scene without ground truth still contributes its predictions
+            as false positives, as in the official evaluation.
         config: Matching parameters; defaults to the official ones.
 
     Returns:

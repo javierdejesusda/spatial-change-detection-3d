@@ -8,6 +8,7 @@ from spatial_change.evaluation.projection import (
     ProjectionConfig,
     project_to_pred_items,
 )
+from spatial_change.pipeline.videos import ImageWindow
 
 SIZE = 20
 INTRINSICS = Intrinsics(
@@ -379,3 +380,130 @@ def test_splat_at_the_border_is_the_clipped_disk() -> None:
     expected = (rows - 10) ** 2 + (cols - 0) ** 2 <= 9
     assert mask is not None
     np.testing.assert_array_equal(mask, expected)
+
+
+def every_pixel(z: float = 5.0) -> NDArray[np.float64]:
+    rows, cols = np.mgrid[:SIZE, :SIZE]
+    x = (cols.ravel() - INTRINSICS.cx) * z / INTRINSICS.fx
+    y = (rows.ravel() - INTRINSICS.cy) * z / INTRINSICS.fy
+    return np.stack([x, y, np.full(x.size, z)], axis=1)
+
+
+def test_a_whole_frame_mask_fills_only_the_window_of_the_grid() -> None:
+    moved = ChangeObject3D(
+        0,
+        ChangeType.MOVED,
+        0.5,
+        {Epoch.BEFORE: every_pixel(), Epoch.AFTER: every_pixel()},
+    )
+    before = [frame(Epoch.BEFORE, 0)]
+    after = [frame(Epoch.AFTER, 0)]
+
+    (item,) = project_to_pred_items(
+        [moved],
+        before,
+        after,
+        20,
+        40,
+        config=EXACT,
+        stride=1,
+        after_window=ImageWindow(0.0, 0.25, 1.0, 0.75),
+    )
+
+    assert item.masks[(1, 0)].all()
+    inside = np.zeros((20, 40), dtype=bool)
+    inside[:, 10:30] = True
+    np.testing.assert_array_equal(item.masks[(2, 0)], inside)
+
+
+def test_without_a_window_the_projection_is_what_it_was() -> None:
+    moved = ChangeObject3D(
+        0,
+        ChangeType.MOVED,
+        0.5,
+        {Epoch.BEFORE: face(), Epoch.AFTER: face(half=1.0)},
+    )
+    frames = ([frame(Epoch.BEFORE, 0)], [frame(Epoch.AFTER, 0)])
+
+    plain = project_to_pred_items(
+        [moved], *frames, 30, 50, config=EXACT, stride=1
+    )
+    whole = project_to_pred_items(
+        [moved],
+        *frames,
+        30,
+        50,
+        config=EXACT,
+        stride=1,
+        after_window=ImageWindow(),
+    )
+
+    assert [sorted(i.masks) for i in whole] == [sorted(plain[0].masks)]
+    for key, mask in plain[0].masks.items():
+        np.testing.assert_array_equal(whole[0].masks[key], mask)
+
+
+def test_a_window_smaller_than_a_pixel_still_holds_one() -> None:
+    obj = ChangeObject3D(0, ChangeType.ADDED, 0.5, {Epoch.AFTER: every_pixel()})
+
+    (item,) = project_to_pred_items(
+        [obj],
+        [],
+        [frame(Epoch.AFTER, 0)],
+        10,
+        10,
+        config=EXACT,
+        stride=1,
+        after_window=ImageWindow(0.99, 0.99, 1.0, 1.0),
+    )
+
+    mask = item.masks[(2, 0)]
+    assert mask.sum() == 1
+    assert mask[9, 9]
+
+
+def camera(intrinsics: Intrinsics, epoch: Epoch) -> Frame:
+    return Frame(
+        epoch=epoch,
+        index=0,
+        timestamp_s=0.0,
+        intrinsics=intrinsics,
+        world_from_camera=SE3.identity(),
+        depth=np.full((intrinsics.height, intrinsics.width), 5.0, np.float32),
+    )
+
+
+@pytest.mark.parametrize("scale", [1, 2])
+def test_a_cropped_camera_with_its_window_matches_the_full_camera(
+    scale: int,
+) -> None:
+    full = Intrinsics(fx=10.0, fy=10.0, cx=20.0, cy=10.0, width=40, height=20)
+    cropped = Intrinsics(
+        fx=10.0, fy=10.0, cx=10.0, cy=10.0, width=20, height=20
+    )
+    window = ImageWindow(0.0, 0.25, 1.0, 0.75)
+    obj = ChangeObject3D(
+        0, ChangeType.ADDED, 0.5, {Epoch.AFTER: face(half=2.0, n=9)}
+    )
+    grid = (20 * scale, 40 * scale)
+
+    (reference,) = project_to_pred_items(
+        [obj],
+        [],
+        [camera(full, Epoch.AFTER)],
+        *grid,
+        config=EXACT,
+        stride=1,
+    )
+    (placed,) = project_to_pred_items(
+        [obj],
+        [],
+        [camera(cropped, Epoch.AFTER)],
+        *grid,
+        config=EXACT,
+        stride=1,
+        after_window=window,
+    )
+
+    assert reference.masks[(2, 0)].any()
+    np.testing.assert_array_equal(placed.masks[(2, 0)], reference.masks[(2, 0)])

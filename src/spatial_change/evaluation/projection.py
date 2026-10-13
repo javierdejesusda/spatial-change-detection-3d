@@ -17,6 +17,11 @@ ruled out there. Each visible point is then splatted into a disk of
 the splat is not depth tested and can spill a few pixels past an occluding
 edge.
 
+The frames of video 2 may show only a window of the image the ground truth
+was drawn on, because the pipeline center-crops them to the aspect of video
+1. Their masks are then placed at that window of the evaluation grid and the
+rest of the grid stays empty, since nothing was observed there.
+
 An object with no visible point in a frame gets no mask there. Because the
 metrics derive the moved type from the presence of masks in both videos, a
 moved object seen in only one video is scored as static.
@@ -34,6 +39,7 @@ from spatial_change.evaluation.metrics import PredItem
 from spatial_change.evaluation.scenediff import DEFAULT_FRAME_STRIDE
 from spatial_change.geometry import depth_residual, usable_pixels
 from spatial_change.geometry.projection import DEFAULT_MIN_CONFIDENCE
+from spatial_change.pipeline.videos import WHOLE_IMAGE, ImageWindow
 
 _REQUIRED_EPOCHS = {
     ChangeType.ADDED: frozenset({Epoch.AFTER}),
@@ -134,6 +140,28 @@ def _render(
     )
 
 
+def _place_in_window(
+    mask: NDArray[np.bool_], height: int, width: int, window: ImageWindow
+) -> NDArray[np.bool_]:
+    """Resizes a mask into a window of an otherwise empty grid.
+
+    Args:
+        mask: The mask of a frame that shows only the window.
+        height: Grid height.
+        width: Grid width.
+        window: The part of the grid the frame shows.
+
+    Returns:
+        The ``(height, width)`` mask.
+    """
+    rows, cols = window.slices(height, width)
+    placed = np.zeros((height, width), dtype=bool)
+    placed[rows, cols] = resize_nearest(
+        mask, rows.stop - rows.start, cols.stop - cols.start
+    )
+    return placed
+
+
 def project_to_pred_items(
     objects: Sequence[ChangeObject3D],
     before_frames: Sequence[Frame],
@@ -143,6 +171,7 @@ def project_to_pred_items(
     *,
     config: ProjectionConfig | None = None,
     stride: int = DEFAULT_FRAME_STRIDE,
+    after_window: ImageWindow = WHOLE_IMAGE,
 ) -> list[PredItem]:
     """Projects objects into the sampled frames of both videos.
 
@@ -158,6 +187,9 @@ def project_to_pred_items(
         width: Evaluation grid width.
         config: Projection parameters.
         stride: Frame sampling stride of the evaluation.
+        after_window: The part of the image of video 2 that its frames show;
+            its masks are placed at this window of the grid. Video 1 always
+            fills the grid.
 
     Returns:
         One item per object visible in at least one frame, in input order.
@@ -186,7 +218,12 @@ def project_to_pred_items(
             mask = _render(obj, frame, usable, config)
             if mask is not None:
                 key = (video, frame.index // stride)
-                masks[key] = resize_nearest(mask, height, width)
+                if video == 2:
+                    masks[key] = _place_in_window(
+                        mask, height, width, after_window
+                    )
+                else:
+                    masks[key] = resize_nearest(mask, height, width)
         if masks:
             items.append(
                 PredItem(obj.obj_id, masks, dict.fromkeys(masks, obj.score))
