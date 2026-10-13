@@ -47,12 +47,10 @@ from spatial_change.evaluation.scene import (
     project_run,
 )
 from spatial_change.evaluation.scenediff import (
-    AFTER_VIDEO,
-    BEFORE_VIDEO,
     PairAnnotations,
     check_pair,
     eval_size,
-    find_video,
+    find_pair_videos,
     first_mask_shape,
     load_pair_annotations,
 )
@@ -525,8 +523,7 @@ def _compute(
             stage_seconds[event.name] = event.seconds
 
     try:
-        before = find_video(pair_dir, BEFORE_VIDEO)
-        after = find_video(pair_dir, AFTER_VIDEO)
+        before, after = find_pair_videos(pair_dir)
         stage = "annotations"
         annotations = load_pair_annotations(pair, pair_dir)
         n_gt = len(annotations.objects)

@@ -378,6 +378,25 @@ def find_video(pair_dir: Path, stem: str) -> Path:
     return found[0]
 
 
+def find_pair_videos(pair_dir: Path) -> tuple[Path, Path]:
+    """Finds the BEFORE and the AFTER video of a pair folder.
+
+    Args:
+        pair_dir: The pair folder.
+
+    Returns:
+        The BEFORE video and the AFTER video.
+
+    Raises:
+        FileNotFoundError: If the folder or either video is missing.
+        ValueError: If several files qualify as either video.
+    """
+    return (
+        find_video(pair_dir, BEFORE_VIDEO),
+        find_video(pair_dir, AFTER_VIDEO),
+    )
+
+
 INDOOR_CATEGORIES = frozenset(
     {
         "bathroom",

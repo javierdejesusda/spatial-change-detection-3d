@@ -18,6 +18,7 @@ from spatial_change.evaluation.scenediff import (
     PairAnnotations,
     change_type_from_flags,
     check_pair,
+    find_pair_videos,
     find_video,
     first_mask_shape,
     indoor_pairs,
@@ -362,6 +363,25 @@ def test_two_videos_of_one_kind_are_ambiguous(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="several video1"):
         find_video(tmp_path, "video1")
+
+
+def test_the_videos_of_a_pair_are_the_before_and_the_after(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "video2.MOV").write_bytes(b"")
+    (tmp_path / "video1.mp4").write_bytes(b"")
+
+    assert find_pair_videos(tmp_path) == (
+        tmp_path / "video1.mp4",
+        tmp_path / "video2.MOV",
+    )
+
+
+def test_a_pair_without_its_after_video_is_named(tmp_path: Path) -> None:
+    (tmp_path / "video1.mp4").write_bytes(b"")
+
+    with pytest.raises(FileNotFoundError, match="video2.mp4 or video2.mov"):
+        find_pair_videos(tmp_path)
 
 
 @pytest.mark.parametrize("name", ["a", "living_room_3_living_room_4", "A-1_b"])
