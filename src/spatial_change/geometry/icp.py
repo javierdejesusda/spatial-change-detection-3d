@@ -185,8 +185,9 @@ def trimmed_icp(
 
     Raises:
         ValueError: If a shape is wrong, a value is not finite, fewer than 3
-            source or target points are given, or fewer than 3
-            correspondences survive the gate and trimming.
+            source or target points are given, fewer than 3
+            correspondences survive the gate and trimming, or the kept
+            pairs are collinear or coincident.
     """
     source_points = as_finite_points(source, "source", _MIN_PAIRS)
     index = target if isinstance(target, TargetIndex) else TargetIndex(target)

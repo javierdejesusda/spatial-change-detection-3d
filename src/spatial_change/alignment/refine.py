@@ -112,11 +112,11 @@ def refine_alignment(
         The refined ``target_from_source`` and the final static mask.
 
     Raises:
-        ValueError: If a cloud is malformed or not finite, ``exclude`` has
-            the wrong shape or dtype, or ICP cannot fit the static set:
-            it has fewer than 3 points, fewer than 3 pairs survive the
-            correspondence gate and trimming, or the paired points are
-            collinear or coincident.
+        ValueError: If a cloud is malformed, not finite, or has fewer than
+            3 points, ``exclude`` has the wrong shape or dtype, or ICP
+            cannot fit the static set: it has fewer than 3 points, fewer
+            than 3 pairs survive the correspondence gate and trimming, or
+            the paired points are collinear or coincident.
     """
     source_points = as_finite_points(source, "source", _MIN_POINTS)
     if exclude is None:

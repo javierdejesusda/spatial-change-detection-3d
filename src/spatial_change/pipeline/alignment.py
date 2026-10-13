@@ -88,9 +88,11 @@ def align_epochs(
 
     Raises:
         ValueError: If a stage rejects its input, for example when no point
-            is confident enough, the up direction is wrong, or the static
-            structure is too small or degenerate to register. A missing
-            floor does not raise: a level floor is assumed instead.
+            of a video is confident enough, the up direction looks wrong, or
+            the static structure is too small or degenerate to register. If
+            no horizontal plane is found, a level floor is assumed instead.
+            A ceiling seen with no floor is taken as a floor above the
+            cameras and raises as a wrong up direction.
     """
     from spatial_change.reconstruction.fusion import fuse_frames
 
@@ -98,9 +100,12 @@ def align_epochs(
         fuse_frames(frames, stages.min_confidence, stages.fusion_voxel_size)
         for frames in (before, after)
     ]
+    for name, item in zip(("BEFORE", "AFTER"), fused, strict=True):
+        if len(item.points) == 0:
+            raise ValueError(
+                f"no confident points to align in the {name} video"
+            )
     union = np.concatenate([item.points for item in fused])
-    if len(union) == 0:
-        raise ValueError("no confident points to align")
     thinned = _thin_points(union, ALIGNMENT_POINTS, stages.floor.seed)
     poses = [frame.world_from_camera for frame in (*before, *after)]
     alignment = gravity_align(thinned, poses, ScalePolicy.MODEL, stages.floor)

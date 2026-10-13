@@ -102,6 +102,25 @@ def test_epochs_without_confident_points_are_a_clear_error() -> None:
         align_epochs(blind, other, STAGES)
 
 
+@pytest.mark.parametrize("blind_epoch", ["BEFORE", "AFTER"])
+def test_an_epoch_without_confident_points_is_named(blind_epoch: str) -> None:
+    pair, _, _ = scene_clouds(SEED)
+    epochs = {
+        "BEFORE": with_confidence(pair.before.frames),
+        "AFTER": with_confidence(pair.after.frames),
+    }
+    epochs[blind_epoch] = [
+        dataclasses.replace(f, confidence=np.zeros(f.depth.shape, np.float32))  # type: ignore[union-attr]
+        for f in epochs[blind_epoch]
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=f"no confident points to align in the {blind_epoch} video",
+    ):
+        align_epochs(epochs["BEFORE"], epochs["AFTER"], STAGES)
+
+
 def test_thinning_keeps_everything_below_the_limit() -> None:
     points = np.arange(30, dtype=np.float64).reshape(10, 3)
 
