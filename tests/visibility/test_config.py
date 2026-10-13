@@ -29,6 +29,7 @@ def test_defaults() -> None:
     assert config.min_consistent_votes == 1
     assert config.batch_size == 262_144
     assert config.device == "cpu"
+    assert config.veto is True
 
 
 @pytest.mark.parametrize(

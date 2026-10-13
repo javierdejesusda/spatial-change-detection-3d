@@ -349,6 +349,52 @@ def test_occluded_and_unobserved_votes_never_decide() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("occluded", "unobserved"), [(3, 0), (0, 3), (2, 2), (1, 1)]
+)
+def test_the_veto_decides_what_a_point_nobody_confirms_becomes(
+    occluded: int, unobserved: int
+) -> None:
+    kept = VisibilityConfig(neighbourhood=0)
+    dropped = VisibilityConfig(neighbourhood=0, veto=False)
+
+    assert kept.veto is True
+    assert state_of(0, 0, kept, occluded, unobserved) == PointState.UNKNOWN
+    assert state_of(0, 0, dropped, occluded, unobserved) == PointState.CHANGED
+
+
+def test_without_the_veto_a_point_below_the_free_threshold_is_changed() -> None:
+    kept = VisibilityConfig(neighbourhood=0, min_free_votes=2)
+    dropped = VisibilityConfig(neighbourhood=0, min_free_votes=2, veto=False)
+
+    assert state_of(0, 1, kept) == PointState.UNKNOWN
+    assert state_of(0, 1, dropped) == PointState.CHANGED
+
+
+def test_without_the_veto_a_confirmed_point_is_still_present() -> None:
+    kept = VisibilityConfig(neighbourhood=0)
+    dropped = replace(kept, veto=False)
+
+    for config in (kept, dropped):
+        assert state_of(1, 0, config) == PointState.PRESENT
+        assert state_of(1, 0, config, occluded=5, unobserved=5) == (
+            PointState.PRESENT
+        )
+        assert state_of(2, 2, config) == PointState.PRESENT
+
+
+def test_the_veto_leaves_the_changed_rule_alone() -> None:
+    kept = VisibilityConfig(neighbourhood=0, min_consistent_votes=2)
+    dropped = replace(kept, veto=False)
+
+    for config in (kept, dropped):
+        assert state_of(0, 2, config) == PointState.CHANGED
+        assert state_of(1, 2, config) == PointState.CHANGED
+        assert state_of(2, 2, config) == PointState.PRESENT
+    assert state_of(1, 0, kept) == PointState.UNKNOWN
+    assert state_of(1, 0, dropped) == PointState.CHANGED
+
+
 def test_evidence_properties_return_the_count_columns() -> None:
     frames = [make_frame(plane(3.0)), make_frame(plane(1.0))]
     evidence = vote_points([[0.0, 0.0, PLANE_Z]], frames, NEIGHBOURHOOD_0)

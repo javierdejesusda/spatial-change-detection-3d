@@ -767,8 +767,9 @@ def test_the_digest_follows_the_stage_settings_in_effect() -> None:
     base = settings_digest(CONFIG, MODELS, EVAL)
     later = digest(appearance={"changed_below": 0.3})
     nested = digest(lift={"views": {"max_views": 7}})
+    ablated = digest(visibility={"veto": False})
 
-    assert len({base, later, nested}) == 3
+    assert len({base, later, nested, ablated}) == 4
     assert later == digest(appearance={"changed_below": 0.3})
     assert digest(appearance={"changed_below": 0.4}) == base
     assert digest() == base

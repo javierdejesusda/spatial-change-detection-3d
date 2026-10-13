@@ -79,6 +79,15 @@ class VisibilityConfig:
     the lowest confidence of the window instead. Lengths are in the units
     of the world frame, meters after the alignment stage.
 
+    The visibility veto is what keeps what the other epoch could not see out
+    of the changes: a point is changed only on free votes, so a point that
+    the other epoch saw only from behind nearer geometry (occluded), or not
+    at all (unobserved), stays unknown. ``veto=False`` removes it and marks
+    every point that the other epoch does not confirm as changed, as plain
+    cloud differencing would. That floods the changes with objects that were
+    only hidden or never seen, so it is meant for ablations that measure
+    what the vote buys, not for runs.
+
     Attributes:
         abs_tolerance: Depth tolerance at zero depth, positive.
         rel_tolerance: Extra tolerance per unit of depth, at least 0.
@@ -94,6 +103,10 @@ class VisibilityConfig:
             at least 1.
         batch_size: Points per batch, at least 1.
         device: Torch device the computation runs on.
+        veto: Whether occluded and unobserved votes keep a point from being
+            changed. If ``False``, every point with fewer than
+            ``min_consistent_votes`` consistent votes is changed, whatever
+            else it collected.
     """
 
     abs_tolerance: float = 0.05
@@ -105,6 +118,7 @@ class VisibilityConfig:
     min_consistent_votes: int = 1
     batch_size: int = 262_144
     device: str = "cpu"
+    veto: bool = True
 
     def __post_init__(self) -> None:
         """Validates the parameters.
@@ -349,7 +363,7 @@ def _states(
 
     Args:
         counts: ``(N, 4)`` vote counts in ``Vote`` order.
-        config: Vote thresholds.
+        config: Vote thresholds and whether the visibility veto applies.
 
     Returns:
         ``(N,)`` int8 ``PointState`` codes.
@@ -360,6 +374,8 @@ def _states(
     states[consistent >= config.min_consistent_votes] = PointState.PRESENT
     changed = (free >= config.min_free_votes) & (free > consistent)
     states[changed] = PointState.CHANGED
+    if not config.veto:
+        states[states == PointState.UNKNOWN] = PointState.CHANGED
     return states
 
 

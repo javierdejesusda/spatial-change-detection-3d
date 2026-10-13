@@ -347,3 +347,17 @@ def test_override_fields_keeps_what_it_is_not_given() -> None:
 
     assert changed == Outer(ratio=1.0, inner=Inner(depth=2))
     assert override_fields(Outer(), {}, "outer") == Outer()
+
+
+def test_the_visibility_veto_is_switched_off_from_the_config() -> None:
+    off = RunConfig(stages={"visibility": {"veto": False}})
+
+    assert build_stage_configs(RunConfig(), "cuda").visibility.veto is True
+    assert build_stage_configs(off, "cuda").visibility == VisibilityConfig(
+        device="cuda", veto=False
+    )
+
+
+def test_the_visibility_veto_is_a_boolean_in_the_config() -> None:
+    with pytest.raises(ValidationError, match=r"visibility\.veto"):
+        RunConfig(stages={"visibility": {"veto": "false"}})
