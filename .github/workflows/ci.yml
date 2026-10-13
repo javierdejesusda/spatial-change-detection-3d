@@ -18,7 +18,7 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libegl1 libgl1 libgomp1
-      - run: uv sync --locked --extra cpu
+      - run: uv sync --locked --extra cpu --extra app
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy

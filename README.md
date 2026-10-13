@@ -242,6 +242,28 @@ scored as missed) and for the pairs that finished. Other flags:
 `--config`, `--device`, `--cache-dir`, and `--debug` work as for `run`; the
 cache defaults to `cache` inside `--out`.
 
+## Web app
+
+`app` serves a page on this computer where you upload the two videos and read
+the report, a table of the changes, the 3D scene, and the four files described
+under Outputs. It needs the `app` extra, which you add to the install command
+of your PyTorch build:
+
+```bash
+uv sync --extra cu130 --extra app   # CPU only: --extra cpu --extra app
+uv run spatial-change app
+```
+
+Open the address it prints. It listens on `127.0.0.1` only, runs one job at a
+time, takes MP4, MOV, or M4V videos up to 1 GB each, and keeps them on this
+computer. To reach it from another machine, tunnel the port over SSH, for
+example `ssh -L 7860:127.0.0.1:7860 user@host`. Each run writes into its own
+folder under `.cache/spatial-change/app` in your home folder, next to the stage
+`cache`, and a run that fails leaves no folder behind; pass `--runs-dir` to
+keep the runs elsewhere. `--config`, `--describer`, `--device`, and
+`--max-keyframes` work as for `run`, and `--port` picks the port (default
+7860, or the next free one).
+
 ## Third-party licenses
 
 This repository's code is MIT, but the model weights it downloads are not.
@@ -319,6 +341,8 @@ settings exit with code 2. Add `--debug` for the traceback.
 | `error: median camera height above the low end of the points must be positive; the up direction is wrong`, or `error: median camera height is far below a fitted floor; the up direction is wrong` | The up direction estimate failed, for example when the cameras look up for most of the capture or only the ceiling is in view. Keep the camera level or pitched down. |
 | `error: no confident points to align` | No pixel of either video passed the confidence threshold of the reconstruction. Try other footage. |
 | `error: fewer than 3 usable pairs (...)` | The registration of the AFTER epoch onto the BEFORE epoch found almost no matching points (by default within 0.25 m). Record both videos over the same area. |
+| `error: the web app needs the app extra; add --extra app to your uv sync command` | `app` was started without the `app` extra. Run `uv sync --extra cu130 --extra app`, or `--extra cpu --extra app`. |
+| `error: port <n> is in use; pick another with --port` or `error: no free port was found; pick one with --port` | The port given with `--port` is in use, or none of the ports that `app` tries was free. Pick a free port with `--port`, or leave `--port` out to take the next free port from 7860. |
 | `RuntimeWarning: stage cache: could not <read, decode, or write> the <stage> entry (...); continuing without it` | The message names one of the three. `read` or `decode`: a cache entry was unreadable or damaged, and the run recomputes the stage. `write`: the stage ran, but its result could not be stored, so the next run computes it again. |
 | `RuntimeWarning: stage cache: the appearance came from '<fallback>', not '<model>', so it was not stored` | The gated DINOv3 weights could not be loaded, so the open fallback encoded the frames. The run is fine. The result is not cached, so a later run with access does not get it. See Hugging Face access. |
 

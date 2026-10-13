@@ -2,6 +2,7 @@
 
 import argparse
 import gc
+import importlib.util
 import sys
 from collections import Counter
 from collections.abc import Sequence
@@ -21,6 +22,12 @@ _EXIT_FAILURE = 1
 _EXIT_INTERRUPTED = 130
 # Destinations of the flags whose value wins over the config file.
 _CONFIG_FLAGS = ("describer", "device", "max_keyframes")
+_NO_APP_EXTRA = (
+    "error: the web app needs the app extra; "
+    "add --extra app to your uv sync command"
+)
+# The start of what gradio raises when it cannot bind any port.
+_NO_PORT = "Cannot find empty port"
 _NO_FFPROBE_NOTE = (
     "note: ffprobe is not on PATH; frame slots use the time between frames, "
     "so videos with dropped frames may be off by one slot"
@@ -31,8 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     """Builds the top-level argument parser.
 
     Returns:
-        The configured parser with the ``run``, ``evaluate``, and
-        ``fetch-demo`` subcommands.
+        The configured parser with the ``run``, ``evaluate``,
+        ``fetch-demo``, and ``app`` subcommands.
     """
     parser = argparse.ArgumentParser(
         prog="spatial-change",
@@ -67,7 +74,45 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(run_parser=run)
     _add_evaluate(commands)
     _add_fetch_demo(commands)
+    _add_app(commands)
     return parser
+
+
+def _add_config_flags(
+    group: "argparse._ArgumentGroup",
+) -> list[argparse.Action]:
+    """Adds the config file flag and the flags whose value wins over it.
+
+    Args:
+        group: The group of a subcommand that runs the pipeline.
+
+    Returns:
+        The flags added.
+    """
+    return [
+        group.add_argument(
+            "--config",
+            type=Path,
+            help="JSON file with the settings of the run",
+        ),
+        group.add_argument(
+            "--describer",
+            choices=("auto", "vlm", "template"),
+            help="how changes are described (default: auto)",
+        ),
+        group.add_argument(
+            "--device",
+            help=(
+                "torch device of the models, such as cuda or cpu "
+                "(default: auto)"
+            ),
+        ),
+        group.add_argument(
+            "--max-keyframes",
+            type=int,
+            help="keyframes kept per video (default: 48)",
+        ),
+    ]
 
 
 def _add_run_settings(
@@ -93,28 +138,7 @@ def _add_run_settings(
     if cache_default is not None:
         cache_help += f" (default: {cache_default})"
     settings = [
-        group.add_argument(
-            "--config",
-            type=Path,
-            help="JSON file with the settings of the run",
-        ),
-        group.add_argument(
-            "--describer",
-            choices=("auto", "vlm", "template"),
-            help="how changes are described (default: auto)",
-        ),
-        group.add_argument(
-            "--device",
-            help=(
-                "torch device of the models, such as cuda or cpu "
-                "(default: auto)"
-            ),
-        ),
-        group.add_argument(
-            "--max-keyframes",
-            type=int,
-            help="keyframes kept per video (default: 48)",
-        ),
+        *_add_config_flags(group),
         group.add_argument(
             "--overwrite",
             action="store_true",
@@ -270,6 +294,41 @@ def _add_fetch_demo(
         cache_default="cache, inside the --run folder",
     )
     fetch_demo.set_defaults(fetch_demo_parser=fetch_demo, run_settings=settings)
+
+
+def _add_app(
+    commands: "argparse._SubParsersAction[argparse.ArgumentParser]",
+) -> None:
+    """Adds the ``app`` subcommand.
+
+    Args:
+        commands: The subparsers of the top-level parser.
+    """
+    app = commands.add_parser(
+        "app",
+        help="open the web app on this computer",
+        description=(
+            "Serve a web page where you upload two videos and read the "
+            "changes, the report, and the 3D scene. It needs the app extra. "
+            "The page listens on 127.0.0.1 only and runs one job at a "
+            "time; the videos stay on this computer."
+        ),
+    )
+    app.add_argument(
+        "--port",
+        type=int,
+        help="port to listen on (default: 7860, or the next free one)",
+    )
+    app.add_argument(
+        "--runs-dir",
+        type=Path,
+        help=(
+            "folder that keeps one folder per run and the cache "
+            "(default: .cache/spatial-change/app in your home folder)"
+        ),
+    )
+    _add_config_flags(app.add_argument_group("settings of each run"))
+    app.set_defaults(app_parser=app)
 
 
 def _plural(count: int, noun: str) -> str:
@@ -707,6 +766,56 @@ def _fetch_demo_command(args: argparse.Namespace) -> int:
     return _run_demo_pairs(args, config, models, folders)
 
 
+def _launch_failure(error: OSError, port: int | None) -> str:
+    """Words why the server of the app did not start.
+
+    Args:
+        error: What launching the server raised.
+        port: The port asked for with ``--port``, if any.
+
+    Returns:
+        A line that points to ``--port`` when no port could be bound, and the
+        first line of the error otherwise.
+    """
+    if _NO_PORT not in str(error):
+        return first_line(error)
+    if port is None:
+        return "no free port was found; pick one with --port"
+    return f"port {port} is in use; pick another with --port"
+
+
+def _app_command(args: argparse.Namespace) -> int:
+    """Serves the web app for the ``app`` subcommand.
+
+    Args:
+        args: The parsed arguments.
+
+    Returns:
+        0 when the server stopped, 1 if the app extra is not installed or
+        the server could not start.
+    """
+    config = _load_run_config(args, args.app_parser)
+    if (
+        importlib.util.find_spec("gradio") is None
+        or importlib.util.find_spec("gradio_rerun") is None
+    ):
+        print(_NO_APP_EXTRA, file=sys.stderr)
+        return _EXIT_FAILURE
+    from spatial_change.app import handlers, ui
+
+    runs_dir: Path = args.runs_dir or handlers.default_runs_dir()
+    try:
+        ui.launch_app(
+            runner=handlers.pipeline_runner(config, runs_dir / "cache"),
+            runs_root=runs_dir,
+            port=args.port,
+        )
+    except OSError as error:
+        print(f"error: {_launch_failure(error, args.port)}", file=sys.stderr)
+        return _EXIT_FAILURE
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Runs the command-line interface.
 
@@ -714,7 +823,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv: Arguments to parse. Defaults to ``sys.argv[1:]``.
 
     Returns:
-        The process exit code: 0 on success, 1 if a run or a download failed,
+        The process exit code: 0 on success, 1 if a run or a download
+        failed, or the app extra is missing or its server could not start,
         130 if an evaluation was interrupted. Invalid arguments or settings
         exit with 2 through argparse.
     """
@@ -727,4 +837,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _evaluate_command(args)
     if args.command == "fetch-demo":
         return _fetch_demo_command(args)
+    if args.command == "app":
+        return _app_command(args)
     return _run_command(args)

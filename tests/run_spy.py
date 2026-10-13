@@ -17,6 +17,30 @@ from spatial_change.pipeline import (
 from spatial_change.pipeline.outputs import OUTPUT_FILES
 
 
+def fake_result(
+    out_dir: Path, report: ChangeReport, seconds: dict[str, float]
+) -> PipelineResult:
+    """Builds the result of a run whose files have not been written.
+
+    Args:
+        out_dir: The folder the four output files are named under.
+        report: The report of the result.
+        seconds: The wall time of each stage.
+
+    Returns:
+        A result with no facts, an identity alignment, and an empty scene.
+    """
+    files = OutputFiles(*(out_dir / name for name in OUTPUT_FILES))
+    return PipelineResult(
+        report,
+        (),
+        files,
+        seconds,
+        Sim3.identity(),
+        RoomScene((), (), {}),
+    )
+
+
 class RunSpy:
     """Stands in for ``run_videos`` and records how it was called."""
 
@@ -54,16 +78,8 @@ class RunSpy:
         error = self.errors.get(out_dir.name, self.error)
         if error is not None:
             raise error
-        files = OutputFiles(*(out_dir / n for n in OUTPUT_FILES))
         report = ChangeReport(changes=[], unobserved_regions=[], metadata={})
-        return PipelineResult(
-            report,
-            (),
-            files,
-            {"voting": 4.23},
-            Sim3.identity(),
-            RoomScene((), (), {}),
-        )
+        return fake_result(out_dir, report, {"voting": 4.23})
 
 
 def install_run_spy(monkeypatch: pytest.MonkeyPatch) -> RunSpy:
