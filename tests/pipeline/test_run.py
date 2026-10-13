@@ -1,8 +1,9 @@
 import dataclasses
 import itertools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from statistics import median
+from typing import Any
 
 import numpy as np
 import pytest
@@ -25,6 +26,7 @@ from spatial_change.domain import (
 )
 from spatial_change.pipeline import (
     STAGES,
+    MetadataValue,
     Models,
     PipelineResult,
     RunConfig,
@@ -36,6 +38,7 @@ from spatial_change.pipeline import run as run_module
 from spatial_change.pipeline.outputs import OUTPUT_FILES
 from spatial_change.pipeline.videos import (
     WHOLE_IMAGE,
+    FrameDurations,
     ImageWindow,
     LoadedVideos,
 )
@@ -307,6 +310,34 @@ def test_the_scene_keeps_the_window_the_after_frames_were_cut_to(
     assert result.report.metadata["after_cropped_to_before_aspect"] is True
 
 
+def run_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **loaded: Any
+) -> Mapping[str, MetadataValue]:
+    """Runs two videos that ``load_video_frames`` answers with ``loaded``."""
+    pair, _, _ = scene_clouds(SEEDS[0])
+    info = VideoInfo(fps=30.0, frame_count=6, width=800, height=400)
+
+    def load(*args: object) -> LoadedVideos:
+        return LoadedVideos(
+            video_frames(pair, Epoch.BEFORE),
+            video_frames(pair, Epoch.AFTER),
+            info,
+            info,
+            WHOLE_IMAGE,
+            **loaded,
+        )
+
+    monkeypatch.setattr(run_module, "load_video_frames", load)
+    result = run_videos(
+        Path("a.mp4"),
+        Path("b.mp4"),
+        tmp_path / "out",
+        TEMPLATE,
+        synthetic_models(pair, Timeline()),
+    )
+    return result.report.metadata
+
+
 @pytest.mark.parametrize(
     ("strided", "expected"),
     [
@@ -320,8 +351,6 @@ def test_a_run_on_a_stride_records_how_many_frames_qualified(
     strided: tuple[int, int] | None,
     expected: dict[str, int],
 ) -> None:
-    pair, _, _ = scene_clouds(SEEDS[0])
-    info = VideoInfo(fps=30.0, frame_count=6, width=800, height=400)
     counts = (
         {}
         if strided is None
@@ -331,28 +360,31 @@ def test_a_run_on_a_stride_records_how_many_frames_qualified(
         }
     )
 
-    def load(*args: object) -> LoadedVideos:
-        return LoadedVideos(
-            video_frames(pair, Epoch.BEFORE),
-            video_frames(pair, Epoch.AFTER),
-            info,
-            info,
-            WHOLE_IMAGE,
-            **counts,
-        )
+    metadata = run_loaded(tmp_path, monkeypatch, **counts)
 
-    monkeypatch.setattr(run_module, "load_video_frames", load)
-
-    result = run_videos(
-        Path("a.mp4"),
-        Path("b.mp4"),
-        tmp_path / "out",
-        TEMPLATE,
-        synthetic_models(pair, Timeline()),
-    )
-
-    metadata = result.report.metadata
     found = {k: v for k, v in metadata.items() if k.startswith("strided_")}
+    assert found == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("container", {"frame_durations": "container"}),
+        ("gaps", {"frame_durations": "gaps"}),
+        (None, {}),
+    ],
+)
+def test_a_run_on_a_stride_records_where_the_frame_durations_came_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: FrameDurations | None,
+    expected: dict[str, str],
+) -> None:
+    metadata = run_loaded(tmp_path, monkeypatch, frame_durations=source)
+
+    found = {
+        k: v for k, v in metadata.items() if k.startswith("frame_durations")
+    }
     assert found == expected
 
 

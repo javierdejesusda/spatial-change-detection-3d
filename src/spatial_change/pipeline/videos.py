@@ -17,7 +17,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 
 _ASPECT_TOLERANCE = 0.01
 """Relative aspect difference below which the AFTER frames are not cropped."""
+
+FrameDurations = Literal["container", "gaps"]
+"""Where the time each frame is shown came from: the container of the video,
+or the gaps between its frames."""
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,11 @@ class LoadedVideos:
             video on the stride, of which ``before`` holds all or, above the
             keyframe cap, an even subset; ``None`` for keyframes.
         strided_after: The same for the AFTER video.
+        frame_durations: On a fixed frame stride, where the time each frame
+            is shown came from: ``container`` when both videos gave it, or
+            ``gaps`` when either had to use the time to the next frame
+            instead, which can be a slot off after dropped frames; ``None``
+            for keyframes.
     """
 
     before: list[VideoFrame]
@@ -114,6 +123,7 @@ class LoadedVideos:
     after_window: ImageWindow
     strided_before: int | None = None
     strided_after: int | None = None
+    frame_durations: FrameDurations | None = None
 
     @property
     def after_cropped(self) -> bool:
@@ -209,7 +219,7 @@ def _strided_frames(
     stride: int,
     cap: int,
     prepare: Callable[[NDArray[np.uint8]], NDArray[np.uint8]],
-) -> tuple[list[VideoFrame], int]:
+) -> tuple[list[VideoFrame], int, bool]:
     """Decodes the frames of the slots on the stride of the 30 fps timeline.
 
     A fixed stride is a promise that the frames can be found by their index,
@@ -221,14 +231,17 @@ def _strided_frames(
     one at that stream position, and two kept slots can show the same frame.
 
     The timestamps of the whole stream are read first, without converting a
-    single image, which fixes the frame of every slot. Only the frames of the
-    kept slots are decoded after that, each cropped and resized at once,
-    which keeps a long video small. A second pass costs one more decode of
-    the video, as the keyframes do, where one pass would have to convert
-    every frame because a frame's slots are only known once the next frame's
-    time is. When more slots than ``cap`` are on the stride, an evenly spaced
-    subset is kept that still starts at the first slot on the stride and ends
-    at the last.
+    single image, together with the durations the container gives the
+    frames when ffprobe can list them; these fix the frame of every slot.
+    Without them, or when they do not pair with the timestamps, a frame
+    lasts until the next one, which differs from the container only next to
+    dropped frames. Only the frames of the kept slots are decoded after
+    that, each cropped and resized at once, which keeps a long video small.
+    A second pass costs one more decode of the video, as the keyframes do,
+    where one pass would have to convert every frame because a frame's
+    slots are only known once the next frame's time is. When more slots
+    than ``cap`` are on the stride, an evenly spaced subset is kept that
+    still starts at the first slot on the stride and ends at the last.
 
     Args:
         path: The video.
@@ -238,8 +251,9 @@ def _strided_frames(
 
     Returns:
         The frames in temporal order, each indexed by its slot and stamped
-        with the time of the frame it shows, and how many slots were on the
-        stride before any were thinned out.
+        with the time of the frame it shows, how many slots were on the
+        stride before any were thinned out, and whether the container's
+        durations were used.
 
     Raises:
         ValueError: If no frame is left.
@@ -252,7 +266,10 @@ def _strided_frames(
     stamps = capture.read_timestamps(path)
     if not stamps:
         raise ValueError(f"no frame on the stride in video: {path}")
-    sources = cfr_source_indices(stamps)
+    container = capture.read_container_durations(path)
+    if container is not None and len(container) != len(stamps):
+        container = None
+    sources = cfr_source_indices(stamps, container)
     slots = range(0, len(sources), stride)
     on_stride = len(slots)
     chosen = uniform(slots, cap) if on_stride > cap else list(slots)
@@ -271,7 +288,7 @@ def _strided_frames(
     ]
     if not frames:
         raise ValueError(f"no frame on the stride in video: {path}")
-    return frames, on_stride
+    return frames, on_stride, container is not None
 
 
 def _frame_rate(info: VideoInfo) -> float:
@@ -341,10 +358,10 @@ def load_video_frames(
 
     stride = stages.frame_stride
     if stride is not None:
-        before, strided_before = _strided_frames(
+        before, strided_before, before_timed = _strided_frames(
             before_path, stride, cap, prepare_before
         )
-        after, strided_after = _strided_frames(
+        after, strided_after, after_timed = _strided_frames(
             after_path, stride, cap, prepare_after
         )
         return LoadedVideos(
@@ -355,6 +372,7 @@ def load_video_frames(
             window,
             strided_before,
             strided_after,
+            "container" if before_timed and after_timed else "gaps",
         )
     strides = [
         max(1, round(_frame_rate(info) / stages.sample_fps)) for info in infos

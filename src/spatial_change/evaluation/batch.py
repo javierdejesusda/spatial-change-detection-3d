@@ -70,6 +70,7 @@ from spatial_change.pipeline.config import (
     build_stage_configs,
     resolve_device,
 )
+from spatial_change.pipeline.videos import FrameDurations
 
 RECORD_VERSION = 5
 """Format of ``result.json``; part of the settings, so a new format makes
@@ -137,6 +138,13 @@ class PairRecord(BaseModel):
         frames_thinned: Whether a video had more frames on the stride than the
             reconstruction used, so some scored frames got no prediction;
             ``None`` if the run did not say.
+        frame_durations: Where the times that place the scored frames on the
+            30 fps timeline came from: ``"container"`` when ffprobe gave the
+            duration of every frame, ``"gaps"`` when the gaps between frames
+            stood in for them, which can leave a frame a slot off in video
+            with dropped frames; ``None`` if the run did not say. It is not
+            part of the settings, so a pair timed by gaps is reused after
+            ffprobe is installed; delete its folder to run it again.
         gt_matches_video: Whether the first ground-truth mask has the size of
             the BEFORE video; ``None`` without a mask or a video size. A
             ``False`` is recorded and the pair is still scored.
@@ -169,6 +177,7 @@ class PairRecord(BaseModel):
     frames_before: int | None
     frames_after: int | None
     frames_thinned: bool | None
+    frame_durations: FrameDurations | None = None
     gt_matches_video: bool | None
     metrics: Metrics | None
     error_type: str | None
@@ -197,6 +206,9 @@ class BatchSummary(BaseModel):
         after_cropped: Ok pairs whose AFTER frames were cropped.
         frames_thinned: Ok pairs with more frames on the stride than the
             reconstruction used, so some scored frames have no prediction.
+        timed_by_gaps: Ok pairs whose frames were timed by the gaps between
+            frames rather than the container's durations, so some scored
+            frames may be a slot off.
         gt_mismatch: Ok pairs whose ground truth is not the size of the
             BEFORE video.
         changes_by_type: Changes of the ok pairs by type.
@@ -217,6 +229,7 @@ class BatchSummary(BaseModel):
     floor_unobserved: tuple[str, ...]
     after_cropped: tuple[str, ...]
     frames_thinned: tuple[str, ...]
+    timed_by_gaps: tuple[str, ...]
     gt_mismatch: tuple[str, ...]
     changes_by_type: dict[str, int]
     pairs: tuple[PairRecord, ...]
@@ -378,6 +391,18 @@ def _frames_thinned(metadata: Mapping[str, MetadataValue]) -> bool | None:
     return any(thinned)
 
 
+def _frame_durations(
+    metadata: Mapping[str, MetadataValue],
+) -> FrameDurations | None:
+    """Tells where a run took the durations of its frames from."""
+    source = metadata.get("frame_durations")
+    if source == "container":
+        return "container"
+    if source == "gaps":
+        return "gaps"
+    return None
+
+
 def _gt_matches_video(
     annotations: PairAnnotations, metadata: Mapping[str, MetadataValue]
 ) -> bool | None:
@@ -426,6 +451,7 @@ def _ok_record(
         frames_before=_count(metadata, "frames_before"),
         frames_after=_count(metadata, "frames_after"),
         frames_thinned=_frames_thinned(metadata),
+        frame_durations=_frame_durations(metadata),
         gt_matches_video=_gt_matches_video(annotations, metadata),
         metrics=metrics,
         error_type=None,
@@ -465,6 +491,7 @@ def _failed_record(
         frames_before=None,
         frames_after=None,
         frames_thinned=None,
+        frame_durations=None,
         gt_matches_video=None,
         metrics=None,
         error_type=type(error).__name__,
@@ -701,6 +728,7 @@ def _collect(
         floor_unobserved=tuple(r.pair for r in ok if r.floor_observed is False),
         after_cropped=tuple(r.pair for r in ok if r.after_cropped is True),
         frames_thinned=tuple(r.pair for r in ok if r.frames_thinned is True),
+        timed_by_gaps=tuple(r.pair for r in ok if r.frame_durations == "gaps"),
         gt_mismatch=tuple(r.pair for r in ok if r.gt_matches_video is False),
         changes_by_type=dict(sorted(kinds.items())),
         pairs=tuple(found),

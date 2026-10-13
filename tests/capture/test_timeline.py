@@ -45,20 +45,90 @@ def test_a_29_97_fps_video_repeats_one_frame_after_half_a_tick_of_drift() -> (
     sources = cfr_source_indices(times)
 
     assert sources[:499] == list(range(499))
-    # The tie at frame 499 falls on either side of the floating point error,
-    # so the repeated frame is 499 or 500; the offset after it is not.
-    assert sources[499:502] in ([499, 499, 500], [499, 500, 500])
+    # Frame 499 starts at tick 499.499 and lasts 1.001 ticks, so it ends on
+    # the 1.5 tick tie. ffmpeg rounds the start down to 499.49899292 (a
+    # multiple of 1/65536) and then nudges it up by half that step, which
+    # leaves the end at 1.5000005 ticks: two slots.
+    assert sources[499:502] == [499, 499, 500]
     assert sources[502:1000] == list(range(501, 999))
 
 
 def test_a_24_fps_video_repeats_every_fourth_frame_at_an_exact_tie() -> None:
     # Each frame lasts 1.25 ticks, so frames 1, 5, 9, ... start a quarter tick
-    # late and end on the 1.5 tick tie that rounds to two slots.
+    # late and end on the 1.5 tick tie, which the nudge of their start sends
+    # to two slots.
     sources = cfr_source_indices(evenly(40, 24.0))
 
     assert sources == [
         i for i in range(40) for _ in range(2 if i % 4 == 1 else 1)
     ]
+
+
+def test_a_start_a_hair_short_of_a_half_tick_counts_as_the_half() -> None:
+    # The second frame ends 4e-6 ticks short of 1.5: it rounds to the half
+    # and the nudge lifts it over, so it fills two slots.
+    times = [0.0, (1.5 - 4e-6) * TICK]
+
+    assert cfr_source_indices(times, [TICK, TICK]) == [0, 1, 1]
+
+
+def test_a_start_a_step_short_of_a_half_tick_stays_short() -> None:
+    # 1.5e-5 ticks is one step of 1/65536 below 1.5: the start keeps that
+    # step and the nudge of half a step leaves the end under the half.
+    times = [0.0, (1.5 - 1.5e-5) * TICK]
+
+    assert cfr_source_indices(times, [TICK, TICK]) == [0, 1]
+
+
+def test_a_negative_start_is_nudged_down() -> None:
+    # The end is 1.5 minus the nudge, which rounds to one slot; a nudge up
+    # would make it two.
+    times = [-1.5 * TICK]
+
+    assert cfr_source_indices(times, [3 * TICK]) == [0]
+
+
+def test_a_start_on_a_whole_tick_is_not_nudged() -> None:
+    # The first frame ends on 1.5 ticks exactly and starts on tick 0, which
+    # ffmpeg leaves alone: the tie goes to the even count, two slots. A nudge
+    # toward minus would leave the end under the half and fill one.
+    assert cfr_source_indices([0.0], [1.5 * TICK]) == [0, 0]
+
+
+def test_a_start_on_a_later_whole_tick_is_not_nudged() -> None:
+    # The second frame starts on tick 2, one past the free slot, and lasts
+    # 1.5 ticks, so its end is 2.5 past the slot. The tie goes to the even
+    # count, two slots; a nudge toward plus would make it three.
+    times = [0.0, 2 * TICK]
+
+    assert cfr_source_indices(times, [TICK, 1.5 * TICK]) == [0, 1, 1]
+
+
+def test_a_count_a_hair_under_a_half_rounds_up_in_single_precision() -> None:
+    # 1e-9 ticks is far below the resolution of a float32 near 1.5, so
+    # llrintf sees the half itself and sends it to two. Plain double rounding
+    # would see the shortfall and give one.
+    assert cfr_source_indices([0.0], [(1.5 - 1e-9) * TICK]) == [0, 0]
+
+
+def test_a_start_is_rounded_to_a_step_before_it_is_nudged() -> None:
+    # The second frame lasts one tick after a first frame that fills three
+    # slots, so it is dropped when its start is under 0.9 ticks (its end is
+    # then under -1.1). It starts 0.6 steps of 1/65536 tick under 0.9. Only
+    # nudged by half a step it would still be 0.1 steps under and dropped.
+    # ffmpeg first rounds it to the nearest step, 0.4 under 0.9, and the nudge
+    # then lifts it to 0.1 steps over: the frame stays.
+    times = [0.0, (58981.8 / 65536) * TICK]
+
+    assert cfr_source_indices(times, [3 * TICK, TICK]) == [0, 0, 0, 1]
+
+
+def test_a_tie_between_slots_goes_to_the_larger_count() -> None:
+    # The second frame ends on 2.5 exactly, which would round to 2, and
+    # starts 1.5 ticks late, so its first slot repeats the first frame.
+    times = [0.0, 2.5 * TICK]
+
+    assert cfr_source_indices(times, [TICK, TICK]) == [0, 0, 1, 1]
 
 
 def test_a_rate_just_under_30_fps_repeats_a_frame_at_half_a_tick() -> None:

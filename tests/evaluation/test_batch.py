@@ -352,6 +352,95 @@ def test_the_summary_lists_the_pairs_whose_frames_were_thinned(
     )
 
 
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        ({"frame_durations": "container"}, "container"),
+        ({"frame_durations": "gaps"}, "gaps"),
+        ({}, None),
+        ({"frame_durations": "sidecar"}, None),
+    ],
+    ids=["container", "gaps", "unknown", "unrecognized"],
+)
+def test_a_pair_records_where_its_frame_durations_came_from(
+    tmp_path: Path,
+    run: PipelineResult,
+    extra: dict[str, str],
+    expected: str | None,
+) -> None:
+    make_data(tmp_path, ["a"], run)
+
+    batch(tmp_path, ["a"], Runner({"a": with_metadata(run, **extra)}))
+
+    assert read_record(tmp_path / "out", "a").frame_durations == expected
+
+
+def test_a_failed_pair_does_not_say_where_its_frame_durations_came_from(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+
+    batch(tmp_path, ["a"], Runner({"a": RuntimeError("boom")}))
+
+    assert read_record(tmp_path / "out", "a").frame_durations is None
+
+
+def test_a_record_from_before_frame_durations_were_recorded_still_parses(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+    batch(tmp_path, ["a"], Runner({"a": run}))
+    path = tmp_path / "out" / "pairs" / "a" / "result.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    del stored["frame_durations"]
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    runner = Runner({})
+
+    batch(tmp_path, ["a"], runner)
+
+    assert runner.calls == []
+    assert read_record(tmp_path / "out", "a").frame_durations is None
+
+
+def test_the_summary_lists_the_pairs_timed_by_gaps(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    names = ["gaps", "container", "unknown", "broken"]
+    make_data(tmp_path, names, run)
+    runner = Runner(
+        {
+            "gaps": with_metadata(run, frame_durations="gaps"),
+            "container": with_metadata(run, frame_durations="container"),
+            "unknown": run,
+            "broken": RuntimeError("boom"),
+        }
+    )
+
+    summary = batch(tmp_path, names, runner)
+
+    assert summary.timed_by_gaps == ("gaps",)
+    assert json.loads((tmp_path / "out/summary.json").read_text("utf-8"))[
+        "timed_by_gaps"
+    ] == ["gaps"]
+    assert (
+        summarize(names, tmp_path / "data", tmp_path / "out", EVAL) == summary
+    )
+
+
+def test_a_pair_timed_by_gaps_is_not_run_again(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+    gaps = with_metadata(run, frame_durations="gaps")
+    first = batch(tmp_path, ["a"], Runner({"a": gaps}))
+    runner = Runner({})
+
+    second = batch(tmp_path, ["a"], runner)
+
+    assert runner.calls == []
+    assert second.timed_by_gaps == first.timed_by_gaps == ("a",)
+
+
 def test_changes_seen_in_no_scored_frame_are_counted_but_not_scored(
     tmp_path: Path, run: PipelineResult
 ) -> None:

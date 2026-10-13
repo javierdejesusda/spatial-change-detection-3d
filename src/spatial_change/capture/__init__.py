@@ -1,5 +1,6 @@
 """Video ingest and keyframe selection."""
 
+from spatial_change.capture.durations import read_container_durations
 from spatial_change.capture.keyframes import (
     KeyframeConfig,
     overlap,
@@ -26,6 +27,7 @@ __all__ = [
     "cfr_source_indices",
     "overlap",
     "probe_video",
+    "read_container_durations",
     "read_frames",
     "read_frames_at",
     "read_timestamps",

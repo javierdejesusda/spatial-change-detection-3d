@@ -8,6 +8,7 @@ video that is already 30 fps without drift.
 """
 
 import itertools
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -21,6 +22,9 @@ _TOLERANCE_TICKS = 1.1
 _PREVIOUS_FRAME_BIAS_TICKS = 0.6
 """Part of a gap that is not filled with the previous frame."""
 
+_START_STEPS_PER_TICK = 1 << 16
+"""Resolution of a frame start in ffmpeg's encoder, in steps per tick."""
+
 
 def _round_ticks(ticks: float) -> int:
     """Rounds a tick count like C ``llrintf``.
@@ -30,6 +34,23 @@ def _round_ticks(ticks: float) -> int:
     halves then go to the even integer.
     """
     return round(float(np.float32(ticks)))
+
+
+def _encoder_start(ticks: float) -> float:
+    """Rounds a frame start the way ffmpeg's encoder does.
+
+    The start goes to the nearest step of 1/65536 tick, halves away from
+    zero. Unless that lands on a whole tick it is then nudged by half a step
+    away from zero. The nudge keeps a start that lands on a half tick from
+    being decided by rounding noise further on.
+    """
+    steps = math.copysign(
+        math.floor(abs(ticks) * _START_STEPS_PER_TICK + 0.5), ticks
+    )
+    start = steps / _START_STEPS_PER_TICK
+    if start == round(start):
+        return start
+    return start + math.copysign(0.5 / _START_STEPS_PER_TICK, start)
 
 
 def cfr_source_indices(
@@ -52,10 +73,15 @@ def cfr_source_indices(
     -1.1 and one slot when ``delta`` is within 1.1 of zero. Above 1.1 it
     fills ``round(delta)`` slots, and when ``delta0`` is also above 1.1 the
     first ``round(delta0 - 0.6)`` of them repeat the previous frame instead.
-    Both roundings are made in single precision with halves going to the
-    even integer, as ffmpeg's ``llrintf`` does. ffmpeg also clips a frame
-    that starts before ``next_pts``; that only rewrites a negative
-    ``delta0``, which no branch above reads, so it is not repeated here.
+
+    Two roundings are done as ffmpeg does them, so that a frame ending near
+    a tie is decided as ffmpeg decides it. The start is first rounded the
+    way its encoder does (``adjust_frame_pts_to_encoder_tb``, see
+    ``_encoder_start``); the durations are not rounded. Then the slot counts
+    are rounded in single precision with halves going to the even integer,
+    as ``llrintf`` does. ffmpeg also clips a frame that starts before
+    ``next_pts``; that only rewrites a negative ``delta0``, which no branch
+    above reads, so it is not repeated here.
 
     ffmpeg runs a file with one stream, as every phone video here is, in its
     ``vscfr`` mode, which does not repeat the first frame when it starts at
@@ -73,7 +99,8 @@ def cfr_source_indices(
             before it, and a lone frame one tick. ffmpeg uses the duration
             its container gives each packet, which is the same except next
             to dropped frames in variable frame rate video: there it counts
-            the gap twice, so pass the container's durations to match it.
+            the gap twice, so pass the container's durations to match it
+            (``read_container_durations`` lists them).
         fps: Rate of the timeline.
 
     Returns:
@@ -97,7 +124,7 @@ def cfr_source_indices(
     for index, (time_s, duration_s) in enumerate(
         zip(times_s, durations_s, strict=True)
     ):
-        delta0 = time_s * fps - len(sources)
+        delta0 = _encoder_start(time_s * fps) - len(sources)
         delta = delta0 + duration_s * fps
         slots = 1
         repeats = 0

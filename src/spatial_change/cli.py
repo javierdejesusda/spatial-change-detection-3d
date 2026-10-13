@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 _EXIT_FAILURE = 1
 _EXIT_INTERRUPTED = 130
+_NO_FFPROBE_NOTE = (
+    "note: ffprobe is not on PATH; frame slots use the time between frames, "
+    "so videos with dropped frames may be off by one slot"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -389,6 +393,12 @@ def _evaluate_command(args: argparse.Namespace) -> int:
         )
     if args.describer is None and config.describer == "auto":
         config = config.model_copy(update={"describer": "template"})
+
+    if not args.summary_only:
+        from spatial_change.capture import durations
+
+        if durations.ffprobe_path() is None:
+            print(_NO_FFPROBE_NOTE, file=sys.stderr, flush=True)
 
     resumed = 0
 

@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from spatial_change import pipeline
+from spatial_change.capture import durations
 from spatial_change.cli import main
 from spatial_change.evaluation import batch, scenediff_fetch
 from spatial_change.evaluation.batch import (
@@ -51,6 +52,7 @@ def record(
         frames_before=None,
         frames_after=None,
         frames_thinned=None,
+        frame_durations=None,
         gt_matches_video=None,
         metrics=None if failed else METRICS,
         error_type="RuntimeError" if failed else None,
@@ -77,6 +79,7 @@ def summary(
         floor_unobserved=(),
         after_cropped=(),
         frames_thinned=(),
+        timed_by_gaps=(),
         gt_mismatch=(),
         changes_by_type={},
         pairs=pairs,
@@ -149,6 +152,7 @@ def spy_fixture(monkeypatch: pytest.MonkeyPatch) -> Spy:
     monkeypatch.setattr(batch, "run_batch", spy.run_batch)
     monkeypatch.setattr(batch, "summarize", spy.summarize)
     monkeypatch.setattr(pipeline, "default_models", lambda config: "models")
+    monkeypatch.setattr(durations, "ffprobe_path", lambda: "ffprobe")
     return spy
 
 
@@ -477,6 +481,60 @@ def test_every_pair_gets_one_progress_line(
         "(RuntimeError: CUDA out of memory)",
         "[6/28] hallway_1_hallway_2: ok (resumed)",
     ]
+
+
+NO_FFPROBE_LINE = (
+    "note: ffprobe is not on PATH; frame slots use the time between frames, "
+    "so videos with dropped frames may be off by one slot"
+)
+
+
+def test_a_missing_ffprobe_is_said_once_before_the_first_pair(
+    spy: Spy,
+    data: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(durations, "ffprobe_path", lambda: None)
+    spy.events = [
+        PairEvent(1, 2, record("a_pair"), False),
+        PairEvent(2, 2, record("b_pair"), False),
+    ]
+
+    code = main(["evaluate", str(data), "--out", str(tmp_path)])
+
+    assert code == 0
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[0] == NO_FFPROBE_LINE
+    assert lines.count(NO_FFPROBE_LINE) == 1
+    assert len(lines) == 3
+    assert len(spy.runs) == 1
+
+
+def test_an_available_ffprobe_is_not_mentioned(
+    spy: Spy,
+    data: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    main(["evaluate", str(data), "--out", str(tmp_path)])
+
+    assert "ffprobe" not in capsys.readouterr().err
+
+
+def test_summary_only_runs_nothing_so_it_does_not_mention_ffprobe(
+    spy: Spy,
+    data: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(durations, "ffprobe_path", lambda: None)
+
+    main(["evaluate", str(data), "--out", str(tmp_path), "--summary-only"])
+
+    assert "ffprobe" not in capsys.readouterr().err
 
 
 def test_finished_with_failed_pairs_is_still_success_and_says_where_it_wrote(

@@ -12,6 +12,7 @@ from rle_helpers import encode_mask
 
 import spatial_change.capture as capture
 from spatial_change.capture import read_frames
+from spatial_change.capture.durations import ffprobe_path
 from spatial_change.domain import SE3, ChangeType, Epoch, Frame, Intrinsics
 from spatial_change.evaluation.projection import (
     ChangeObject3D,
@@ -25,6 +26,7 @@ from spatial_change.evaluation.scenediff import (
 from spatial_change.pipeline import RunConfig, videos
 from spatial_change.pipeline.config import MIN_KEYFRAMES, build_stage_configs
 from spatial_change.pipeline.videos import (
+    FrameDurations,
     ImageWindow,
     center_crop_to_aspect,
     crop_window,
@@ -462,6 +464,29 @@ def source_of(
     return int(np.argmin(errors))
 
 
+def ffmpeg_slot_images(
+    video: Path, folder: Path, shape: tuple[int, ...]
+) -> list[NDArray[np.uint8]]:
+    """Reads the frames ``ffmpeg -r 30`` writes, resized to ``shape``."""
+    folder.mkdir()
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video)]
+        + ["-r", "30", "-start_number", "0", str(folder / "%d.png")],
+        check=True,
+    )
+    height, width = shape[:2]
+    return [
+        cv2.resize(
+            cv2.cvtColor(
+                cv2.imread(str(folder / f"{n}.png")), cv2.COLOR_BGR2RGB
+            ),
+            (width, height),
+            interpolation=cv2.INTER_AREA,
+        )
+        for n in range(len(list(folder.glob("*.png"))))
+    ]
+
+
 def test_a_60_fps_clip_is_indexed_on_the_30_fps_timeline(
     tmp_path: Path,
 ) -> None:
@@ -506,13 +531,6 @@ def test_the_slots_hold_the_frames_ffmpeg_writes_at_30_fps(
     if shutil.which("ffmpeg") is None:
         pytest.skip("ffmpeg is not installed")
     before = noise_video(tmp_path / "a.mp4", 160, 120, 80, seed=1, fps=fps)
-    written = tmp_path / "ffmpeg"
-    written.mkdir()
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(before)]
-        + ["-r", "30", "-start_number", "0", str(written / "%d.png")],
-        check=True,
-    )
     stages = build_stage_configs(
         RunConfig(max_keyframes=64, frame_stride=2), "cpu"
     )
@@ -521,13 +539,10 @@ def test_the_slots_hold_the_frames_ffmpeg_writes_at_30_fps(
 
     shape = loaded.before[0].image.shape
     natives = native_images(before, shape)
-    timeline = len(list(written.glob("*.png")))
-    assert loaded.strided_before == (timeline + 1) // 2
+    written = ffmpeg_slot_images(before, tmp_path / "ffmpeg", shape)
+    assert loaded.strided_before == (len(written) + 1) // 2
     for frame in loaded.before:
-        png = cv2.cvtColor(
-            cv2.imread(str(written / f"{frame.index}.png")), cv2.COLOR_BGR2RGB
-        )
-        expected = cv2.resize(png, shape[1::-1], interpolation=cv2.INTER_AREA)
+        expected = written[frame.index]
         assert source_of(frame.image, natives) == source_of(expected, natives)
 
 
@@ -648,3 +663,144 @@ def test_a_video_without_timestamps_is_an_error(
 
     with pytest.raises(ValueError, match="a.mp4"):
         load_video_frames(before, before, TIMELINE, max_frames=128)
+
+
+ONE_EACH = build_stage_configs(
+    RunConfig(max_keyframes=64, frame_stride=1), "cpu"
+)
+
+
+def with_durations(
+    monkeypatch: pytest.MonkeyPatch, *answers: list[float] | None
+) -> list[Path]:
+    """Makes the container give each video of a load the next answer."""
+    asked: list[Path] = []
+    pending = list(answers)
+
+    def read(path: Path) -> list[float] | None:
+        asked.append(path)
+        return pending.pop(0)
+
+    monkeypatch.setattr(capture, "read_container_durations", read)
+    return asked
+
+
+def longer_tenth(count: int) -> list[float]:
+    """Gives every frame one 30 fps tick but the tenth, which lasts two."""
+    return [2 / 30 if i == 10 else 1 / 30 for i in range(count)]
+
+
+def test_the_container_durations_decide_which_frame_fills_each_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 40, seed=1)
+    after = noise_video(tmp_path / "b.mp4", 160, 120, 40, seed=2)
+    asked = with_durations(monkeypatch, longer_tenth(40), longer_tenth(40))
+
+    loaded = load_video_frames(before, after, ONE_EACH, max_frames=128)
+
+    assert asked == [before, after]
+    assert [f.index for f in loaded.before] == list(range(41))
+    natives = native_images(before, loaded.before[0].image.shape)
+    assert [source_of(f.image, natives) for f in loaded.before] == [
+        *range(11),
+        *range(10, 40),
+    ]
+    assert loaded.strided_before == 41
+    assert loaded.frame_durations == "container"
+
+
+def dropped_frame_clip(tmp_path: Path) -> Path:
+    """Re-encodes a noise clip with B-frames and without its 21st frame."""
+    source = noise_video(tmp_path / "source.mp4", 160, 120, 40, seed=1)
+    clip = tmp_path / "dropped.mp4"
+    command = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source)]
+    command += ["-vf", r"select=not(eq(n\,20))", "-fps_mode", "vfr"]
+    command += ["-c:v", "libx264", "-bf", "2", "-g", "100"]
+    command += ["-pix_fmt", "yuv420p", str(clip)]
+    if subprocess.run(command, capture_output=True).returncode != 0:
+        pytest.skip("ffmpeg cannot encode with libx264")
+    return clip
+
+
+def test_the_container_durations_match_the_frames_ffmpeg_writes_after_a_drop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if shutil.which("ffmpeg") is None or ffprobe_path() is None:
+        pytest.skip("ffmpeg and ffprobe are not installed")
+    clip = dropped_frame_clip(tmp_path)
+    contained = load_video_frames(clip, clip, ONE_EACH, max_frames=128)
+    with_durations(monkeypatch, None, None)
+    by_gaps = load_video_frames(clip, clip, ONE_EACH, max_frames=128)
+
+    shape = contained.before[0].image.shape
+    natives = native_images(clip, shape)
+    written = ffmpeg_slot_images(clip, tmp_path / "ffmpeg", shape)
+    expected = [source_of(image, natives) for image in written]
+    assert (contained.frame_durations, by_gaps.frame_durations) == (
+        "container",
+        "gaps",
+    )
+    assert [source_of(f.image, natives) for f in contained.before] == expected
+    assert [source_of(f.image, natives) for f in by_gaps.before] != expected
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [None, [1 / 30] * 39, [1 / 30] * 41],
+    ids=["none", "one fewer", "one more"],
+)
+def test_without_usable_container_durations_the_gaps_between_frames_are_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: list[float] | None
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 40, seed=1)
+    after = noise_video(tmp_path / "b.mp4", 160, 120, 40, seed=2)
+    with_durations(monkeypatch, answer, answer)
+
+    loaded = load_video_frames(before, after, ONE_EACH, max_frames=128)
+
+    assert [f.index for f in loaded.before] == list(range(40))
+    natives = native_images(before, loaded.before[0].image.shape)
+    assert [source_of(f.image, natives) for f in loaded.before] == list(
+        range(40)
+    )
+    assert loaded.frame_durations == "gaps"
+
+
+UNIFORM = [1 / 30] * 40
+
+
+@pytest.mark.parametrize(
+    ("answers", "expected"),
+    [
+        ((None, UNIFORM), "gaps"),
+        ((UNIFORM, None), "gaps"),
+        ((UNIFORM, UNIFORM), "container"),
+    ],
+)
+def test_the_durations_are_the_containers_only_when_both_videos_have_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    answers: tuple[list[float] | None, list[float] | None],
+    expected: FrameDurations,
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 40, seed=1)
+    after = noise_video(tmp_path / "b.mp4", 160, 120, 40, seed=2)
+    with_durations(monkeypatch, *answers)
+
+    loaded = load_video_frames(before, after, ONE_EACH, max_frames=128)
+
+    assert loaded.frame_durations == expected
+
+
+def test_keyframes_neither_ask_for_durations_nor_report_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 60, seed=1)
+    after = noise_video(tmp_path / "b.mp4", 160, 120, 60, seed=2)
+    asked = with_durations(monkeypatch)
+
+    loaded = load_video_frames(before, after, STAGES, max_frames=128)
+
+    assert asked == []
+    assert loaded.frame_durations is None

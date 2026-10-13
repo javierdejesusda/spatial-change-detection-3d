@@ -183,6 +183,8 @@ def run_videos(
     if videos.strided_before is not None and videos.strided_after is not None:
         extra["strided_frames_before"] = videos.strided_before
         extra["strided_frames_after"] = videos.strided_after
+    if videos.frame_durations is not None:
+        extra["frame_durations"] = videos.frame_durations
     return _run(
         videos.before,
         videos.after,
