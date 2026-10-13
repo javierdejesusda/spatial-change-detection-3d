@@ -430,6 +430,13 @@ def test_the_viewer_reuses_one_image_buffer() -> None:
     assert "pixels.fill(0)" in SCRIPT
 
 
+def test_the_viewer_does_not_draw_a_canvas_with_no_pixels() -> None:
+    draw = SCRIPT[SCRIPT.index("function draw()") :]
+    guard = draw.find("if (pw === 0 || ph === 0) { return; }")
+
+    assert 0 <= guard < draw.index("drawPoints(b")
+
+
 def test_write_report_writes_utf8_and_creates_directories(
     tmp_path: Path,
 ) -> None:

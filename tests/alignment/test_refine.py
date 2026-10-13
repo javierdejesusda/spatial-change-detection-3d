@@ -279,6 +279,21 @@ def test_invalid_inputs_raise(epochs: Epochs) -> None:
         )
 
 
+def test_a_collinear_static_set_raises() -> None:
+    line = np.zeros((50, 3))
+    line[:, 0] = np.linspace(0.0, 3.0, 50)
+
+    with pytest.raises(ValueError, match="collinear"):
+        refine_alignment(line, line)
+
+
+def test_clouds_too_far_apart_for_the_gate_raise(epochs: Epochs) -> None:
+    before, after, _, _ = epochs
+
+    with pytest.raises(ValueError, match="usable pairs"):
+        refine_alignment(after + 1000.0, before)
+
+
 @pytest.mark.parametrize("shape", [(30,), (30, 2)])
 def test_malformed_clouds_raise_value_error(
     epochs: Epochs, shape: tuple[int, ...]

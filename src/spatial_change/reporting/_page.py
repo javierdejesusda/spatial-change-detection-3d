@@ -428,6 +428,7 @@ SCRIPT = """
     var ratio = window.devicePixelRatio || 1;
     var w = canvas.clientWidth, h = canvas.clientHeight;
     var pw = Math.round(w * ratio), ph = Math.round(h * ratio);
+    if (pw === 0 || ph === 0) { return; }
     if (canvas.width !== pw || canvas.height !== ph) {
       canvas.width = pw;
       canvas.height = ph;
