@@ -88,8 +88,9 @@ def align_epochs(
 
     Raises:
         ValueError: If a stage rejects its input, for example when no point
-            is confident enough, no floor is found, or the static structure is
-            too small or degenerate to register.
+            is confident enough, the up direction is wrong, or the static
+            structure is too small or degenerate to register. A missing
+            floor does not raise: a level floor is assumed instead.
     """
     from spatial_change.reconstruction.fusion import fuse_frames
 
