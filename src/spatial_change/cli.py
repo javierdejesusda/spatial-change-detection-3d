@@ -26,8 +26,10 @@ _NO_APP_EXTRA = (
     "error: the web app needs the app extra; "
     "add --extra app to your uv sync command"
 )
-# The start of what gradio raises when it cannot bind any port.
+# The start of what gradio raises when it cannot bind any port, whatever
+# the cause: in use, or not allowed for this user.
 _NO_PORT = "Cannot find empty port"
+_MAX_PORT = 65_535
 _NO_FFPROBE_NOTE = (
     "note: ffprobe is not on PATH; frame slots use the time between frames, "
     "so videos with dropped frames may be off by one slot"
@@ -296,6 +298,30 @@ def _add_fetch_demo(
     fetch_demo.set_defaults(fetch_demo_parser=fetch_demo, run_settings=settings)
 
 
+def _port(text: str) -> int:
+    """Reads the value of ``--port``.
+
+    Args:
+        text: The value given on the command line.
+
+    Returns:
+        The port.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value is not a whole number from 1
+            to 65535.
+    """
+    try:
+        port = int(text)
+    except ValueError:
+        port = 0
+    if not 1 <= port <= _MAX_PORT:
+        raise argparse.ArgumentTypeError(
+            f"not a port from 1 to {_MAX_PORT}: {text}"
+        )
+    return port
+
+
 def _add_app(
     commands: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> None:
@@ -316,7 +342,7 @@ def _add_app(
     )
     app.add_argument(
         "--port",
-        type=int,
+        type=_port,
         help="port to listen on (default: 7860, or the next free one)",
     )
     app.add_argument(
@@ -781,7 +807,7 @@ def _launch_failure(error: OSError, port: int | None) -> str:
         return first_line(error)
     if port is None:
         return "no free port was found; pick one with --port"
-    return f"port {port} is in use; pick another with --port"
+    return f"cannot listen on port {port}; pick another with --port"
 
 
 def _app_command(args: argparse.Namespace) -> int:

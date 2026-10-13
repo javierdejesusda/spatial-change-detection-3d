@@ -104,7 +104,22 @@ def test_the_app_cannot_be_told_to_listen_elsewhere(
     assert ui.launches == []
 
 
-def test_a_busy_port_is_named_and_the_port_flag_is_the_way_out(
+@pytest.mark.parametrize("port", ["0", "65536", "-1", "http"])
+def test_a_port_outside_1_to_65535_is_a_usage_error(
+    ui: FakeUi,
+    runners: list[tuple[RunConfig, Path | None]],
+    capsys: pytest.CaptureFixture[str],
+    port: str,
+) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        main(["app", "--port", port])
+
+    assert excinfo.value.code == 2
+    assert "--port" in capsys.readouterr().err
+    assert ui.launches == []
+
+
+def test_a_port_that_cannot_be_bound_is_named_and_the_port_flag_is_the_way_out(
     ui: FakeUi,
     runners: list[tuple[RunConfig, Path | None]],
     capsys: pytest.CaptureFixture[str],
@@ -115,7 +130,7 @@ def test_a_busy_port_is_named_and_the_port_flag_is_the_way_out(
 
     assert code == 1
     assert capsys.readouterr().err == (
-        "error: port 8123 is in use; pick another with --port\n"
+        "error: cannot listen on port 8123; pick another with --port\n"
     )
 
 
