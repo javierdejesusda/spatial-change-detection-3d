@@ -1,6 +1,12 @@
 """Tests for the profiling helpers."""
 
+import sys
+from types import SimpleNamespace
+
+import pytest
+
 from spatial_change.diagnostics.profiling import (
+    CudaMemoryProbe,
     Measurement,
     measure,
     to_markdown_table,
@@ -17,6 +23,18 @@ class _FakeProbe:
     def peak_mb(self) -> float:
         self.events.append("peak")
         return 123.45
+
+
+class _FakeCuda:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def reset_peak_memory_stats(self, device: object = None) -> None:
+        self.calls.append(("reset", device))
+
+    def max_memory_allocated(self, device: object = None) -> int:
+        self.calls.append(("peak", device))
+        return 3 << 20
 
 
 def test_measure_returns_result_and_elapsed_time() -> None:
@@ -78,3 +96,17 @@ def test_markdown_table_has_header_rows_and_na() -> None:
     assert lines[1] == "| --- | --- | --- | --- | --- |"
     assert lines[2] == "| a | 1.23 | 56.8 |  | 10 |"
     assert lines[3] == "| b | 0.50 | n/a | fast |  |"
+
+
+def test_the_cuda_probe_reads_the_device_it_was_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cuda = _FakeCuda()
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=cuda))
+    probe = CudaMemoryProbe("cuda:1")
+
+    probe.reset()
+    peak = probe.peak_mb()
+
+    assert peak == 3.0
+    assert cuda.calls == [("reset", "cuda:1"), ("peak", "cuda:1")]

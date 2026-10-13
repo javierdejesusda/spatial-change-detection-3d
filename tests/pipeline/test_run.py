@@ -280,6 +280,14 @@ def test_frames_given_to_a_run_are_whole_images(template_run: Run) -> None:
     assert template_run.result.scene.after_window == WHOLE_IMAGE
 
 
+def video_files(folder: Path) -> tuple[Path, Path]:
+    """Creates two stand-in video files for a run whose decoding is faked."""
+    before, after = folder / "before.mp4", folder / "after.mp4"
+    before.touch()
+    after.touch()
+    return before, after
+
+
 def test_the_scene_keeps_the_window_the_after_frames_were_cut_to(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -299,8 +307,7 @@ def test_the_scene_keeps_the_window_the_after_frames_were_cut_to(
     monkeypatch.setattr(run_module, "load_video_frames", load)
 
     result = run_videos(
-        Path("a.mp4"),
-        Path("b.mp4"),
+        *video_files(tmp_path),
         tmp_path / "out",
         TEMPLATE,
         synthetic_models(pair, Timeline()),
@@ -329,8 +336,7 @@ def run_loaded(
 
     monkeypatch.setattr(run_module, "load_video_frames", load)
     result = run_videos(
-        Path("a.mp4"),
-        Path("b.mp4"),
+        *video_files(tmp_path),
         tmp_path / "out",
         TEMPLATE,
         synthetic_models(pair, Timeline()),
@@ -519,6 +525,77 @@ def test_overwrite_writes_into_a_non_empty_out_dir(tmp_path: Path) -> None:
 
     assert all(p.exists() for p in result.files.all)
     assert (tmp_path / "old.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "message"),
+    [
+        ("gone.mp4", "after.mp4", "video not found"),
+        ("before.mp4", "gone.mp4", "video not found"),
+        ("before.mp4", "out", "not a video file"),
+    ],
+)
+def test_a_video_that_is_not_a_file_leaves_the_earlier_outputs_alone(
+    tmp_path: Path, before: str, after: str, message: str
+) -> None:
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    for name in OUTPUT_FILES:
+        (out_dir / name).write_text("good", encoding="utf-8")
+    video_files(tmp_path)
+    pair, _, _ = scene_clouds(SEEDS[0])
+
+    with pytest.raises(FileNotFoundError, match=message):
+        run_videos(
+            tmp_path / before,
+            tmp_path / after,
+            out_dir,
+            TEMPLATE,
+            synthetic_models(pair, Timeline()),
+            overwrite=True,
+        )
+
+    assert {p.name: p.read_text("utf-8") for p in out_dir.iterdir()} == (
+        dict.fromkeys(OUTPUT_FILES, "good")
+    )
+
+
+def test_the_memory_probe_reads_the_device_of_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    devices: list[str] = []
+
+    class Probe:
+        def __init__(self, device: str) -> None:
+            devices.append(device)
+
+        def reset(self) -> None:
+            pass
+
+        def peak_mb(self) -> float:
+            return 1.5
+
+    vote = run_module.vote_epochs
+    monkeypatch.setattr(run_module, "CudaMemoryProbe", Probe)
+    monkeypatch.setattr(
+        run_module,
+        "vote_epochs",
+        lambda before, after, config: vote(
+            before, after, dataclasses.replace(config, device="cpu")
+        ),
+    )
+    pair, _, _ = scene_clouds(SEEDS[0])
+
+    result = run_frames(
+        video_frames(pair, Epoch.BEFORE),
+        video_frames(pair, Epoch.AFTER),
+        tmp_path,
+        RunConfig(device="cuda:1", describer="template", voxel_size=None),
+        synthetic_models(pair, Timeline()),
+    )
+
+    assert devices == ["cuda:1"]
+    assert result.report.metadata["peak_vram_mb"] == 1.5
 
 
 def test_a_run_needs_frames_in_both_epochs(tmp_path: Path) -> None:

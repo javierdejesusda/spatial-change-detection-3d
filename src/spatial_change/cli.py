@@ -116,7 +116,8 @@ def _add_evaluate(
             "Run the system on SceneDiff pairs, score each against its "
             "annotations, and pool the scores into summary.json. Pairs "
             "finished by an earlier call with the same settings are not run "
-            "again, and a pair that fails is recorded and skipped."
+            "again. A pair that fails is recorded, the batch goes on, and "
+            "the next call tries it again."
         ),
     )
     evaluate.add_argument(

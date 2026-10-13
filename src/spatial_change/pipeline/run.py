@@ -158,10 +158,12 @@ def run_videos(
     Raises:
         FileExistsError: If ``out_dir`` holds files and ``overwrite`` is
             false.
-        FileNotFoundError: If a video does not exist.
+        FileNotFoundError: If a video does not exist or is not a file. Both
+            are checked before the folder is touched.
         ValueError: If a video cannot be decoded or a stage rejects its
             input.
     """
+    _check_videos(before_path, after_path)
     prepare_out_dir(out_dir, overwrite)
     stages = build_stage_configs(config, resolve_device(config))
     clock = StageClock(progress)
@@ -265,6 +267,19 @@ def _make_describer(kind: str, models: Models) -> Describer:
     return LocalVlmDescriber(models.vlm(), TemplateDescriber())
 
 
+def _check_videos(before_path: Path, after_path: Path) -> None:
+    """Rejects a video that is not a file, before anything is touched.
+
+    Raises:
+        FileNotFoundError: If a video does not exist or is not a file.
+    """
+    for path in (before_path, after_path):
+        if not path.exists():
+            raise FileNotFoundError(f"video not found: {path}")
+        if not path.is_file():
+            raise FileNotFoundError(f"not a video file: {path}")
+
+
 def _check_frames(
     before: Sequence[VideoFrame],
     after: Sequence[VideoFrame],
@@ -348,7 +363,7 @@ def _run(
     from spatial_change.reconstruction import reconstruct_joint
 
     device = stages.visibility.device
-    probe = CudaMemoryProbe() if device.startswith("cuda") else None
+    probe = CudaMemoryProbe(device) if device.startswith("cuda") else None
     if probe is not None:
         probe.reset()
 

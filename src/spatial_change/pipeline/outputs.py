@@ -3,6 +3,7 @@
 Importing this module does not load rerun, torch, open3d, or cv2.
 """
 
+import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,8 +58,9 @@ def prepare_out_dir(out_dir: Path, overwrite: bool) -> None:
         out_dir: The output folder; created with its parents if missing.
         overwrite: Whether a folder that already holds files is accepted.
             The four output files of an earlier run are deleted at once,
-            so a failed run never leaves results that look like its own;
-            other files are left alone.
+            so a run that fails before it writes leaves no stale results;
+            ``write_outputs`` removes the files of a run that fails while
+            writing. Other files are left alone.
 
     Raises:
         FileExistsError: If the folder holds files and ``overwrite`` is
@@ -87,6 +89,12 @@ def write_outputs(
 ) -> OutputFiles:
     """Writes the report, the page, the recording, and the scene.
 
+    If a write fails, every one of the four files is removed, the partial
+    one included, and the error is raised again, so a failed run never
+    leaves results that look like its own. A file that cannot be removed
+    (for example one open in another program) is left, and the original
+    error is still the one raised.
+
     Args:
         out_dir: The output folder, which must exist.
         report: The detected changes and unobserved regions.
@@ -104,15 +112,21 @@ def write_outputs(
         Epoch.BEFORE: ScenePoints(before.points, before.colors),
         Epoch.AFTER: ScenePoints(after.points, after.colors),
     }
-    files.changes.write_text(report.to_json(), encoding="utf-8")
-    write_report(
-        ReportInputs(report, summarize_report(report), crops, clouds),
-        files.report,
-    )
-    save_recording(
-        SceneVisualization(before, after, report, evidence),
-        files.recording,
-        rerun,
-    )
-    write_glb(clouds, report, files.scene)
+    try:
+        files.changes.write_text(report.to_json(), encoding="utf-8")
+        write_report(
+            ReportInputs(report, summarize_report(report), crops, clouds),
+            files.report,
+        )
+        save_recording(
+            SceneVisualization(before, after, report, evidence),
+            files.recording,
+            rerun,
+        )
+        write_glb(clouds, report, files.scene)
+    except BaseException:
+        for path in files.all:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+        raise
     return files

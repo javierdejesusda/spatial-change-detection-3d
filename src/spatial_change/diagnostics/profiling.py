@@ -40,16 +40,25 @@ class MemoryProbe(Protocol):
 
 
 class CudaMemoryProbe:
-    """Peak CUDA memory allocated, read through torch."""
+    """Peak CUDA memory allocated on one device, read through torch."""
+
+    def __init__(self, device: str) -> None:
+        """Binds the probe to a device.
+
+        Args:
+            device: The torch device to read, such as ``cuda:1``.
+        """
+        self._device = device
 
     def reset(self) -> None:
-        """Clears the CUDA peak memory statistics."""
-        importlib.import_module("torch").cuda.reset_peak_memory_stats()
+        """Clears the CUDA peak memory statistics of the device."""
+        torch = importlib.import_module("torch")
+        torch.cuda.reset_peak_memory_stats(self._device)
 
     def peak_mb(self) -> float:
-        """Returns the peak allocated CUDA memory in MB."""
+        """Returns the peak allocated CUDA memory of the device in MB."""
         torch = importlib.import_module("torch")
-        return float(torch.cuda.max_memory_allocated()) / (1 << 20)
+        return float(torch.cuda.max_memory_allocated(self._device)) / (1 << 20)
 
 
 def measure[T](
