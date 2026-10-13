@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import pickle
+import re
 import shutil
 import weakref
 from collections.abc import Callable, Mapping
@@ -957,8 +958,9 @@ def test_a_pair_records_what_became_of_its_uncertain_change(
     ).read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("config", [EVAL, MOVED_EVAL], ids=["drop", "moved"])
 def test_every_uncertain_object_is_stored_whatever_the_setting(
-    tmp_path: Path, run: PipelineResult
+    tmp_path: Path, run: PipelineResult, config: PairEvalConfig
 ) -> None:
     make_data(tmp_path, ["a"], run)
     uncertain = with_uncertain_move(run)
@@ -968,7 +970,7 @@ def test_every_uncertain_object_is_stored_whatever_the_setting(
         if c.type is ChangeType.UNCERTAIN
     )
 
-    batch(tmp_path, ["a"], Runner({"a": uncertain}))
+    batch(tmp_path, ["a"], Runner({"a": uncertain}), config)
 
     stored = load_predictions(tmp_path / "out/pairs/a/pred.npz")
     assert stored.uncertain == {index}
@@ -1067,6 +1069,71 @@ def test_every_pair_of_a_summary_is_scored_with_the_setting_of_the_summary(
     assert read_record(out, "a").uncertain_as == "drop"
 
 
+def test_a_pair_run_as_moved_is_summarized_as_dropped(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+    moved = batch(
+        tmp_path, ["a"], Runner({"a": with_uncertain_move(run)}), MOVED_EVAL
+    )
+    out = tmp_path / "out"
+    stored = (out / "pairs/a/result.json").read_bytes()
+
+    dropped = summarize(["a"], tmp_path / "data", out, EVAL)
+
+    (record,) = dropped.pairs
+    assert record.uncertain_as == dropped.uncertain_as == "drop"
+    assert record.n_scored == 2
+    assert record.metrics is not None
+    assert (record.metrics.tp, record.metrics.fn) == (2, 1)
+    assert moved.metrics is not None
+    assert (moved.metrics.tp, moved.metrics.fn) == (3, 0)
+    assert dropped.metrics == record.metrics
+    assert (out / "pairs/a/result.json").read_bytes() == stored
+    assert read_record(out, "a").uncertain_as == "moved"
+
+
+def test_a_failed_pair_is_listed_with_the_setting_of_the_summary(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+    batch(tmp_path, ["a"], Runner({"a": RuntimeError("boom")}))
+
+    summary = summarize(["a"], tmp_path / "data", tmp_path / "out", MOVED_EVAL)
+
+    (record,) = summary.pairs
+    assert (record.status, record.uncertain_as) == ("failed", "moved")
+    assert (record.metrics, record.n_scored) == (None, 0)
+    assert (record.failed_stage, record.error) == ("reconstruction", "boom")
+    assert summary.uncertain_as == "moved"
+    assert summary.metrics is not None
+    assert summary.metrics.fn == 3
+    assert read_record(tmp_path / "out", "a").uncertain_as == "drop"
+
+
+def test_the_ok_only_metrics_follow_the_setting_of_the_summary(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a", "b"], run)
+    batch(
+        tmp_path,
+        ["a", "b"],
+        Runner({"a": with_uncertain_move(run), "b": RuntimeError("boom")}),
+    )
+    files = tmp_path / "data", tmp_path / "out"
+
+    dropped = summarize(["a", "b"], *files, EVAL)
+    moved = summarize(["a", "b"], *files, MOVED_EVAL)
+
+    assert dropped.metrics_ok_only is not None
+    assert moved.metrics_ok_only is not None
+    assert (dropped.metrics_ok_only.tp, dropped.metrics_ok_only.fn) == (2, 1)
+    assert (moved.metrics_ok_only.tp, moved.metrics_ok_only.fn) == (3, 0)
+    assert dropped.metrics is not None and moved.metrics is not None
+    assert (dropped.metrics.tp, dropped.metrics.fn) == (2, 4)
+    assert (moved.metrics.tp, moved.metrics.fn) == (3, 3)
+
+
 def test_pairs_scored_on_other_frames_are_not_pooled(
     tmp_path: Path, run: PipelineResult
 ) -> None:
@@ -1075,11 +1142,12 @@ def test_pairs_scored_on_other_frames_are_not_pooled(
     kept = (tmp_path / "out/summary.json").read_bytes()
     files = tmp_path / "data", tmp_path / "out"
 
-    for other in (
-        dataclasses.replace(EVAL, stride=2),
-        dataclasses.replace(EVAL, max_length=64),
+    for other, asked in (
+        (dataclasses.replace(EVAL, stride=2), "stride 2, max length 32"),
+        (dataclasses.replace(EVAL, max_length=64), "stride 1, max length 64"),
     ):
-        with pytest.raises(ValueError, match="stride 1.*max length 32"):
+        phrase = f"made with stride 1, max length 32, not {asked}"
+        with pytest.raises(ValueError, match=re.escape(phrase)):
             summarize(["a"], *files, other)
 
     assert (tmp_path / "out/summary.json").read_bytes() == kept
