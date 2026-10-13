@@ -10,7 +10,7 @@ from rooms import (
     sample_faces,
     sample_room,
 )
-from rotations import angle_deg, pitched_cameras, random_rotation
+from rotations import angle_deg, pitched_cameras, random_rotation, rotation_z
 
 from spatial_change.domain import SE3
 from spatial_change.geometry import floor as floor_module
@@ -43,6 +43,28 @@ def _camera(center: tuple[float, float, float]) -> SE3:
 
 
 LEVEL = _camera((0.0, 0.0, 0.0)).rotation
+
+
+def _pitched_through_nadir(
+    pitch_deg: float,
+    yaws_deg: NDArray[np.float64],
+    roll_deg: float | NDArray[np.float64] = 0.0,
+) -> list[SE3]:
+    # Pitching a level camera by t about its x axis gives forward
+    # cos(t) h - sin(t) z and up sin(t) h + cos(t) z for the heading h. Past
+    # 90 degrees the top of the camera tilts back and its up axis points
+    # below the horizon, which an upright look_at camera cannot express.
+    t = np.radians(pitch_deg)
+    yaws, rolls = np.broadcast_arrays(yaws_deg, roll_deg)
+    poses = []
+    for yaw, roll in zip(np.radians(yaws), rolls, strict=True):
+        heading = np.array([np.cos(yaw), np.sin(yaw), 0.0])
+        forward = np.cos(t) * heading - np.sin(t) * Z
+        down = -(np.sin(t) * heading + np.cos(t) * Z)
+        right = np.cross(down, forward)
+        rotation = np.column_stack([right, down, forward]) @ rotation_z(roll)
+        poses.append(SE3(rotation, np.array([0.0, 0.0, 1.5])))
+    return poses
 
 
 def test_up_hint_is_the_mean_camera_up() -> None:
@@ -376,6 +398,91 @@ def test_estimate_up_points_with_the_mean_up(pitch_deg: float) -> None:
 
     assert estimate_up(poses) @ camera_up_hint(poses) > 0.0
     assert estimate_up(poses) @ Z > 0.99
+
+
+@pytest.mark.parametrize("roll_deg", [0.0, 5.0])
+@pytest.mark.parametrize("pitch_deg", [70.0, 100.0, 110.0])
+def test_estimate_up_opposes_the_forward_of_cameras_looking_down(
+    pitch_deg: float, roll_deg: float
+) -> None:
+    yaws = np.linspace(-60.0, 60.0, 25)
+    poses = _pitched_through_nadir(pitch_deg, yaws, roll_deg)
+    forward = np.mean([pose.rotation[:, 2] for pose in poses], axis=0)
+
+    up = estimate_up(poses)
+
+    assert up @ forward < 0.0
+    assert angle_deg(up, Z) < 5.0
+
+
+@pytest.mark.parametrize("nudge", [0.0, 3e-7])
+@pytest.mark.parametrize("seed", range(3))
+def test_estimate_up_defers_to_the_hint_when_the_vote_vanishes(
+    seed: int, nudge: float
+) -> None:
+    # Next to each original, add a camera with its up and forward axes
+    # swapped (x flipped to keep the rotation proper). Each pair votes +v and
+    # -v, so the votes cancel while the mean up still points up. The nudge
+    # pitches one camera by a tiny angle, leaving a vote far below the
+    # threshold that points down; the mean up must still override it.
+    world = random_rotation(np.random.default_rng(seed))
+    originals = _pitched_through_nadir(30.0, np.linspace(-60.0, 60.0, 25))
+    rotations = [pose.rotation for pose in originals]
+    swapped = [
+        np.column_stack([-r[:, 0], -r[:, 2], -r[:, 1]]) for r in rotations
+    ]
+    c, s = np.cos(nudge), np.sin(nudge)
+    rotations[0] = rotations[0] @ np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+    center = world @ originals[0].translation
+    poses = [SE3(world @ r, center) for r in rotations + swapped]
+    stacked = np.array([pose.rotation for pose in poses])
+    vote = np.mean(-stacked[:, :, 1] - stacked[:, :, 2], axis=0)
+    assert np.linalg.norm(vote) < 1e-6
+    assert vote @ (world @ Z) < 1e-12
+    assert camera_up_hint(poses) @ (world @ Z) > 0.1
+
+    np.testing.assert_allclose(estimate_up(poses), world @ Z, atol=1e-6)
+
+
+@pytest.mark.parametrize("pitch_deg", [-20.0, -40.0])
+def test_estimate_up_signs_a_full_turn_of_cameras_looking_up(
+    pitch_deg: float,
+) -> None:
+    # The mean up and the mean forward both point along up, so a vote that
+    # normalized them separately would cancel to noise.
+    for seed in range(60):
+        rng = np.random.default_rng(seed)
+        yaws = np.linspace(0.0, 360.0, 36, endpoint=False)
+        poses = _pitched_through_nadir(
+            pitch_deg,
+            yaws + rng.normal(scale=5.0, size=36),
+            rng.normal(scale=5.0, size=36),
+        )
+
+        assert estimate_up(poses) @ Z > 0.9, f"seed {seed}"
+
+
+def test_estimate_up_signs_a_rolled_partial_turn_looking_up() -> None:
+    # A roll that grows with the heading tilts the plane of the x axes by
+    # about 4 degrees toward the mean heading. The separately normalized means
+    # vote only about 0.01 along up here, which that tilt outweighs.
+    yaws = np.linspace(0.0, 330.0, 34)
+    rolls = 5.0 * np.sin(np.radians(yaws - 165.0))
+    poses = _pitched_through_nadir(-30.0, yaws, rolls)
+
+    assert estimate_up(poses) @ Z > 0.9
+
+
+@pytest.mark.parametrize("pitch_deg", [80.0, 90.0, 100.0])
+def test_estimate_up_handles_a_full_turn_of_cameras_looking_down(
+    pitch_deg: float,
+) -> None:
+    # At 90 degrees the camera ups cancel out to zero, yet the x axes still
+    # fix up and the forward axes give its sign.
+    yaws = np.linspace(0.0, 360.0, 36, endpoint=False)
+    poses = _pitched_through_nadir(pitch_deg, yaws)
+
+    assert angle_deg(estimate_up(poses), Z) < 1.0
 
 
 def test_estimate_up_rejects_empty_poses() -> None:

@@ -42,6 +42,9 @@ _MIN_YAW_SPREAD = 0.02
 # Largest ratio of the smallest to the second eigenvalue: how much roll,
 # against the yaw spread, the x axes may carry before they stop defining up.
 _MAX_ROLL_RATIO = 0.05
+# Smallest norm of the mean camera up minus forward for it to sign the up
+# estimate; below it the cameras cancel and the mean up decides.
+_MIN_VOTE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -149,10 +152,22 @@ def estimate_up(poses: Sequence[SE3]) -> NDArray[np.float64]:
     ``camera_up_hint``. A camera's x axis stays horizontal under pitch and
     only roll tilts it, so up is the direction the x axes are most nearly
     perpendicular to: the eigenvector of the smallest eigenvalue of
-    ``mean(x x^T)``. The sign is the one that agrees with the mean up.
+    ``mean(x x^T)``.
+
+    The sign is the one that agrees with the mean over cameras of camera up
+    minus camera forward. For a camera pitched ``t`` below the horizon, up is
+    ``cos(t) * camera_up - sin(t) * forward``, so that camera's vote along up
+    is ``cos(t) + sin(t)``: positive for ``t`` in (-45, 135) degrees and
+    negative for a camera that looks up more than 45 degrees. So the part of
+    the mean vote along up is positive when every camera is pitched within
+    that range; it decides the sign unless a tilted axis estimate lets the
+    part across up outvote it. The mean up alone votes ``cos(t)``, which
+    vanishes for cameras that look straight down. If the votes cancel (norm
+    below ``_MIN_VOTE``), the mean up decides.
 
     The x axes constrain up only if the cameras yaw enough and roll little.
-    Otherwise this returns ``camera_up_hint(poses)``.
+    Otherwise this returns ``camera_up_hint(poses)``, which is wrong for
+    cameras pitched past straight down.
 
     A steady roll with a small yaw spread passes that test but tilts the
     estimate by about the roll angle, because the x axes then lie on a tilted
@@ -166,16 +181,22 @@ def estimate_up(poses: Sequence[SE3]) -> NDArray[np.float64]:
         A unit vector of shape ``(3,)``.
 
     Raises:
-        ValueError: If there are no poses or the mean up vector is (nearly)
-            zero.
+        ValueError: If there are no poses, or if the mean up vector is
+            (nearly) zero where it is needed: on the fallback path and as the
+            tiebreak of a vanishing vote.
     """
-    hint = camera_up_hint(poses)
-    axes = np.array([pose.rotation[:, 0] for pose in poses])
+    if len(poses) == 0:
+        raise ValueError("need at least one camera pose")
+    rotations = np.array([pose.rotation for pose in poses])
+    axes = rotations[:, :, 0]
     values, vectors = np.linalg.eigh(axes.T @ axes / len(axes))
     if values[1] < _MIN_YAW_SPREAD or values[0] > _MAX_ROLL_RATIO * values[1]:
-        return hint
+        return camera_up_hint(poses)
+    vote = np.mean(-rotations[:, :, 1] - rotations[:, :, 2], axis=0)
+    if np.linalg.norm(vote) < _MIN_VOTE:
+        vote = camera_up_hint(poses)
     up = vectors[:, 0]
-    return up if up @ hint >= 0.0 else -up
+    return up if up @ vote >= 0.0 else -up
 
 
 def _unit(vector: ArrayLike, name: str) -> NDArray[np.float64]:
