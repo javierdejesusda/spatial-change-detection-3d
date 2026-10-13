@@ -17,6 +17,7 @@ reconstruct the scene and compare it reliably.
 - Keep consecutive views overlapping. Do not jump between unrelated spots.
 - Close the loop: end where you started, so the path overlaps itself.
 - Cover each region you care about from at least two different angles.
+- Hold the phone roughly level, or pitched slightly down.
 
 ## What to avoid
 
@@ -26,6 +27,9 @@ reconstruct the scene and compare it reliably.
   closed, lights switched on or off).
 - People or pets in the frame. Moving subjects confuse the reconstruction and
   can look like changes.
+- Long stretches pointed at the ceiling. The system finds "up" from the camera
+  axes, and that fails when a capture looks up more than about 45 degrees on
+  average.
 
 ## Camera settings
 
