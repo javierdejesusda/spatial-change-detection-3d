@@ -116,7 +116,7 @@ def cfr_source_indices(
 
     Raises:
         ValueError: If there is no frame, the durations do not pair with the
-            times, ``fps`` is not positive, or the last frame ends after
+            times, ``fps`` is not positive, or any frame ends after
             ``MAX_TIMELINE_S`` seconds. That is checked before any slot is
             made, so a corrupt timestamp cannot exhaust memory.
     """

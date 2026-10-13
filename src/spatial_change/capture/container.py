@@ -27,7 +27,7 @@ _MAX_PADDING_BOXES = 4
 """Most padding boxes that may come before the first real box."""
 
 _MAX_START_OFFSET = 1024
-"""Furthest byte at which the first real box may start.
+"""Furthest offset at which the first real box may start.
 
 FFmpeg probes a file by its first 2048 bytes, and a long run of padding lets
 another demuxer score higher than the MP4 one. Real padding is an 8-byte
@@ -50,9 +50,15 @@ def require_iso_base_media(path: Path) -> None:
     of a type an MP4 or MOV file starts with, whose 64-bit size, if it has
     one, is at least 16. Padding boxes may come first, at most four, each
     stepped over by its size, so the type that follows them is the one that
-    decides. The first real box must start within the first 1024 bytes. A
+    decides. The first real box must start at byte 1024 or earlier. A
     padding box must have a size of at least 8: a size of 0 would leave
     nothing after it, and the 64-bit size of 1 is not used for padding.
+
+    The first byte of the file must be 0, so the first box is smaller than
+    16 MiB or has a size of 0 or 1. A text format such as a DASH or IMF
+    manifest is only found by FFmpeg in bytes before the first 0, and text
+    whose first eight bytes read as an ``ftyp`` box with a JPEG 2000 brand
+    would otherwise lower the MP4 score far enough for such a format to win.
 
     Args:
         path: Video file path.
@@ -67,7 +73,7 @@ def require_iso_base_media(path: Path) -> None:
         for _ in range(_MAX_PADDING_BOXES + 1):
             handle.seek(offset)
             header = handle.read(_LARGE_BOX_HEADER_SIZE)
-            if len(header) < _BOX_HEADER_SIZE:
+            if len(header) < _BOX_HEADER_SIZE or (offset == 0 and header[0]):
                 break
             size, kind = struct.unpack(">I4s", header[:_BOX_HEADER_SIZE])
             if kind in _START_BOX_TYPES:
