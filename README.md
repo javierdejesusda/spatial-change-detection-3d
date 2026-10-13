@@ -7,11 +7,19 @@ comes with a 3D box, a label, evidence counts, and a one-sentence description.
 Regions that only one video saw are reported as unobserved, never as change,
 so occlusion and unseen areas do not turn into false alarms.
 
+![Two phone videos of a bedroom play side by side, next to a turning 3D view of both point clouds with colored boxes around the detected changes](docs/assets/demo.gif)
+
+Raw output on SceneDiff pair `bedroom_28_bedroom_29`, one of the five demo
+pairs, which were seen during development. The ground truth is two plush toys
+that moved. The system detects the toys but pairs the plush dog with the bear,
+and it also reports bed and pillow changes that did not happen. Measured
+accuracy is in [docs/results.md](docs/results.md).
+
 On the 92 indoor test pairs of the SceneDiff benchmark, run once with the
 shipped defaults, pixel IoU is 0.1174 and AP per scene is 0.0321.
 [docs/results.md](docs/results.md) has the full numbers, how the settings were
-chosen on the validation split, and the ablations. Demo media are not published
-yet.
+chosen on the validation split, and the ablations. The five demo pairs, with
+their reports and Rerun recordings, are described in [Demo](#demo).
 
 ## How it works
 
@@ -124,6 +132,58 @@ wrote runs/demo/scene.glb
 
 Record the two videos as described in the [capture guide](docs/capture-guide.md).
 
+## Demo
+
+`fetch-demo` downloads the five demo pairs of the SceneDiff benchmark, listed
+in the table below, into one folder each, and prints the folders. They are
+about 32 MB in total. The download reads only those members of the benchmark
+archive, with HTTP Range requests, and needs no Hugging Face account.
+
+```bash
+# Download the five pairs into data/demo.
+uv run spatial-change fetch-demo
+
+# Download them and run every pair into runs/demo-pairs/<pair>.
+uv run spatial-change fetch-demo data/demo --run runs/demo-pairs
+```
+
+The first argument is the data folder (default `data/demo`). With `--run OUT`,
+each pair goes through the same pipeline as `run` and writes into `OUT/<pair>`.
+The stage cache is `OUT/cache` unless `--cache-dir` says otherwise, so a rerun
+skips the reconstruction. A pair folder that already holds results needs
+`--overwrite`. A pair that fails prints `error: <pair>: <message>`, and the
+other pairs still run. The command ends with a count such as
+`5 pairs: 5 ok, 0 failed`, and exits with code 1 if any pair failed. The
+settings flags of `run` work with `--run`. Without it, a value other than the
+default is refused.
+
+Running the pairs loads the same models as `run`, and downloads their weights
+on first use. The two gated models are optional: see
+[Hugging Face access](#hugging-face-access).
+
+The report and the Rerun recording of each pair are attached to the
+[v0.1.0 release](https://github.com/javierdejesusda/spatial-change-detection-3d/releases/tag/v0.1.0)
+as `<pair>.report.html` and `<pair>.scene.rrd`. A `report.html` opens offline in
+a browser. Open a recording with `uv run rerun <pair>.scene.rrd`. They were made
+on commit `1ec2429` with the vision-language describer, so their metadata says
+version `0.1.0.dev0`. v0.1.0 differs from that commit only in the docs, the CI
+token permissions, and the version string.
+
+The table puts the ground truth of each pair next to the labels of the changes
+in its report. `uncertain` changes are only counted, as the scores leave them
+out.
+
+| Pair | Ground truth | Reported changes | `uncertain` |
+|------|--------------|------------------|-------------|
+| `living_room_3_living_room_4` | laptop added; cookies and remote control moved | added: object | 4 |
+| `living_room_37_living_room_38` | pillow removed; water bottle moved | moved: bed; added: bottle, object | 5 |
+| `living_room_9_living_room_10` | water bottle, hoodie, and remote control removed; coffee maker and cup moved | moved: trash can, shoe; removed: book; added: mug, object | 5 |
+| `bedroom_28_bedroom_29` | plush bear and plush dog moved | moved: bed, toy, pillow; removed: object (three), bed; added: bed | 0 |
+| `closet_1_closet_2` | white trousers, black trousers, black shirt, and black jacket moved | none | 3 |
+
+These pairs were used during development, so they say little about accuracy;
+see [docs/results.md](docs/results.md).
+
 ## Outputs
 
 | File | What it is |
@@ -132,6 +192,10 @@ Record the two videos as described in the [capture guide](docs/capture-guide.md)
 | `report.html` | One self-contained page: summary, a 3D view of both point clouds with the change boxes, and before/after crops with the evidence of each change. It opens offline. |
 | `scene.rrd` | A [Rerun](https://rerun.io) recording of both epochs, the change boxes, ghosts of moved objects, the unobserved regions, and keyframe panels. Open it with `uv run rerun runs/demo/scene.rrd`. |
 | `scene.glb` | A glTF 2.0 binary with one colored point cloud per epoch, a node per change (its fields are in the node `extras`), and a box per unobserved region. |
+
+![The summary line, a bar of change counts, the 3D view, and the first two change cards with before and after crops](docs/assets/report.jpg)
+
+The top of `report.html` for the demo pair `bedroom_28_bedroom_29`.
 
 All coordinates are in a z-up room frame with the floor at `z = 0`, in meters
 (Pi3X predicts approximately metric scale). The origin and horizontal axes are
@@ -341,6 +405,7 @@ settings exit with code 2. Add `--debug` for the traceback.
 |---------|---------------|
 | `error: <dir> is not empty; pass --overwrite to write into it` | The output folder holds files. Use a new folder or add `--overwrite`. |
 | `error: video not found: <path>` | A video path is wrong. |
+| `error: not an MP4 or MOV video: <path>` | The file does not start like an MP4 or MOV file; its name is not checked. Convert other formats (AVI, MKV, WebM) to MP4 first, as the [capture guide](docs/capture-guide.md) says. |
 | `error: OpenCV cannot open video: <path>` or `error: no decodable frames in video: <path>` | OpenCV could not open or decode the file. Check that it plays, and re-export it in a common format such as H.264 MP4 if it does. |
 | `error: no sharp frame in video: <path>` | Sampling the video gave no frame to choose from. Check that the file plays to the end, or re-export it. |
 | `invalid configuration: ...` | The config file is missing, is not a JSON object, or a key or value is not valid. The message names the field, for example `invalid configuration: stages: Value error, appearance.changed_below: expected float, got str`. |
