@@ -71,7 +71,7 @@ from spatial_change.pipeline.config import (
     resolve_device,
 )
 
-RECORD_VERSION = 4
+RECORD_VERSION = 5
 """Format of ``result.json``; part of the settings, so a new format makes
 every old record stale."""
 PAIRS_DIR = "pairs"

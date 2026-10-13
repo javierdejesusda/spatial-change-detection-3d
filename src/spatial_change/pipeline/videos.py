@@ -4,7 +4,8 @@ Each video is decoded twice. The first pass keeps only a thumbnail and a
 sharpness score of every sampled frame while the keyframes are chosen. The
 second pass keeps only the keyframes, cropped and resized at once, so the
 full-resolution frames never pile up. A fixed frame stride asks for every
-Nth frame instead, which is decoded once.
+Nth slot of the 30 fps timeline instead: the first pass reads only the
+timestamps, and the second decodes only the frames those slots show.
 
 Importing this module does not load cv2; the capture package loads it when
 a video is read.
@@ -100,10 +101,9 @@ class LoadedVideos:
         after_window: The part of the AFTER image the frames show; the
             whole image unless they were center-cropped to the BEFORE
             aspect.
-        strided_before: On a fixed frame stride, the BEFORE frames whose
-            index is a multiple of the stride, of which ``before`` holds
-            all or, above the keyframe cap, an even subset; ``None`` for
-            keyframes.
+        strided_before: On a fixed frame stride, the slots of the BEFORE
+            video on the stride, of which ``before`` holds all or, above the
+            keyframe cap, an even subset; ``None`` for keyframes.
         strided_after: The same for the AFTER video.
     """
 
@@ -210,23 +210,36 @@ def _strided_frames(
     cap: int,
     prepare: Callable[[NDArray[np.uint8]], NDArray[np.uint8]],
 ) -> tuple[list[VideoFrame], int]:
-    """Decodes the frames whose index is a multiple of the stride.
+    """Decodes the frames of the slots on the stride of the 30 fps timeline.
 
     A fixed stride is a promise that the frames can be found by their index,
-    so none is dropped for being blurry or redundant. Each is cropped and
-    resized as soon as it is decoded, which keeps a long video small. When
-    more frames than ``cap`` qualify, an evenly spaced subset is kept that
-    still starts at the first frame on the stride and ends at the last.
+    so none is dropped for being blurry or redundant. The index is the one
+    the annotations count: the slot on the 30 fps timeline that
+    ``ffmpeg -r 30`` writes, which is the position in the stream only for a
+    video that already runs at 30 fps. A slower or faster video has frames
+    repeated or skipped, so a kept slot can show a frame that is not the
+    one at that stream position, and two kept slots can show the same frame.
+
+    The timestamps of the whole stream are read first, without converting a
+    single image, which fixes the frame of every slot. Only the frames of the
+    kept slots are decoded after that, each cropped and resized at once,
+    which keeps a long video small. A second pass costs one more decode of
+    the video, as the keyframes do, where one pass would have to convert
+    every frame because a frame's slots are only known once the next frame's
+    time is. When more slots than ``cap`` are on the stride, an evenly spaced
+    subset is kept that still starts at the first slot on the stride and ends
+    at the last.
 
     Args:
         path: The video.
-        stride: Frames whose index is a multiple of this are kept.
+        stride: Slots whose index is a multiple of this are kept.
         cap: Most frames to keep.
         prepare: Turns a decoded image into the image that is kept.
 
     Returns:
-        The frames in temporal order, and how many frames were on the stride
-        before any were thinned out.
+        The frames in temporal order, each indexed by its slot and stamped
+        with the time of the frame it shows, and how many slots were on the
+        stride before any were thinned out.
 
     Raises:
         ValueError: If no frame is left.
@@ -234,14 +247,28 @@ def _strided_frames(
     import spatial_change.capture as capture
     from spatial_change.capture import VideoFrame
     from spatial_change.capture.keyframes import uniform
+    from spatial_change.capture.timeline import cfr_source_indices
 
+    stamps = capture.read_timestamps(path)
+    if not stamps:
+        raise ValueError(f"no frame on the stride in video: {path}")
+    sources = cfr_source_indices(stamps)
+    slots = range(0, len(sources), stride)
+    on_stride = len(slots)
+    chosen = uniform(slots, cap) if on_stride > cap else list(slots)
+    shown = {
+        frame.index: VideoFrame(
+            frame.index, frame.timestamp_s, prepare(frame.image)
+        )
+        for frame in capture.read_frames_at(
+            path, {sources[slot] for slot in chosen}
+        )
+    }
     frames = [
-        VideoFrame(frame.index, frame.timestamp_s, prepare(frame.image))
-        for frame in capture.read_frames(path, stride)
+        VideoFrame(slot, shown[source].timestamp_s, shown[source].image)
+        for slot in chosen
+        if (source := sources[slot]) in shown
     ]
-    on_stride = len(frames)
-    if on_stride > cap:
-        frames = uniform(frames, cap)
     if not frames:
         raise ValueError(f"no frame on the stride in video: {path}")
     return frames, on_stride
@@ -267,9 +294,11 @@ def load_video_frames(
     center-cropped to the BEFORE ratio, so both epochs see the same field
     of view shape and no frame is stretched.
 
-    With ``stages.frame_stride`` set, the frames are those whose index is a
-    multiple of the stride instead of the sharpest and least redundant ones,
-    and the result says how many there were before any were thinned out.
+    With ``stages.frame_stride`` set, the frames are those of the slots on
+    the stride instead of the sharpest and least redundant ones, and the
+    result says how many there were before any were thinned out. A frame's
+    index is then its slot on the 30 fps timeline the annotations count,
+    not its position in the stream, and its timestamp is its own time.
 
     Args:
         before_path: The BEFORE video.

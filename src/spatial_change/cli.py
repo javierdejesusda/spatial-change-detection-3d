@@ -168,7 +168,8 @@ def _add_evaluate(
         type=int,
         default=DEFAULT_FRAME_STRIDE,
         help=(
-            "frames whose index is a multiple of this are run and scored "
+            "frames of the 30 fps annotation timeline whose index is a "
+            "multiple of this are run and scored "
             f"(default: {DEFAULT_FRAME_STRIDE})"
         ),
     )

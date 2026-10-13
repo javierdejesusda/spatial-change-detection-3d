@@ -1,13 +1,27 @@
 import dataclasses
+import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+from rle_helpers import encode_mask
 
 import spatial_change.capture as capture
 from spatial_change.capture import read_frames
+from spatial_change.domain import SE3, ChangeType, Epoch, Frame, Intrinsics
+from spatial_change.evaluation.projection import (
+    ChangeObject3D,
+    ProjectionConfig,
+    project_to_pred_items,
+)
+from spatial_change.evaluation.scenediff import (
+    gt_items,
+    parse_pair_annotations,
+)
 from spatial_change.pipeline import RunConfig, videos
 from spatial_change.pipeline.config import MIN_KEYFRAMES, build_stage_configs
 from spatial_change.pipeline.videos import (
@@ -24,13 +38,18 @@ SCORED = build_stage_configs(RunConfig(max_keyframes=6, frame_stride=30), "cpu")
 
 
 def noise_video(
-    path: Path, width: int, height: int, count: int, seed: int
+    path: Path,
+    width: int,
+    height: int,
+    count: int,
+    seed: int,
+    fps: float = FPS,
 ) -> Path:
     rng = np.random.default_rng(seed)
     canvas = rng.integers(0, 256, (height, width + 4 * count, 3), np.uint8)
     canvas = cv2.GaussianBlur(canvas, (0, 0), 1.2)
     writer = cv2.VideoWriter(
-        str(path), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (width, height)
+        str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
     )
     if not writer.isOpened():
         pytest.skip("cv2.VideoWriter cannot write mp4v on this platform")
@@ -412,3 +431,220 @@ def test_no_room_for_a_strided_frame_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="a.mp4"):
         load_video_frames(before, after, SCORED, max_frames=1)
+
+
+TIMELINE = build_stage_configs(
+    RunConfig(max_keyframes=64, frame_stride=3), "cpu"
+)
+
+
+def native_images(
+    path: Path, shape: tuple[int, ...]
+) -> list[NDArray[np.float32]]:
+    """Decodes a video, each frame resized to ``shape`` as a loaded one is."""
+    height, width = shape[:2]
+    return [
+        cv2.resize(
+            frame.image, (width, height), interpolation=cv2.INTER_AREA
+        ).astype(np.float32)
+        for frame in read_frames(path)
+    ]
+
+
+def source_of(
+    image: NDArray[np.uint8], natives: list[NDArray[np.float32]]
+) -> int:
+    """Names the decoded frame an image shows, by the least squared error."""
+    errors = [
+        float(((image.astype(np.float32) - native) ** 2).mean())
+        for native in natives
+    ]
+    return int(np.argmin(errors))
+
+
+def test_a_60_fps_clip_is_indexed_on_the_30_fps_timeline(
+    tmp_path: Path,
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 60, seed=1, fps=60.0)
+
+    loaded = load_video_frames(before, before, TIMELINE, max_frames=128)
+
+    slots = list(range(0, 31, 3))
+    assert [f.index for f in loaded.before] == slots
+    assert [f.index for f in loaded.after] == slots
+    natives = native_images(before, loaded.before[0].image.shape)
+    sources = [n if n < 4 else 2 * n - 3 for n in slots]
+    assert [source_of(f.image, natives) for f in loaded.before] == sources
+    assert [f.timestamp_s for f in loaded.before] == pytest.approx(
+        [k / 60 for k in sources], abs=1e-3
+    )
+    assert (loaded.strided_before, loaded.strided_after) == (11, 11)
+
+
+def test_a_slow_clip_shows_each_frame_in_the_slots_it_fills(
+    tmp_path: Path,
+) -> None:
+    stages = build_stage_configs(
+        RunConfig(max_keyframes=64, frame_stride=1), "cpu"
+    )
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 10, seed=1, fps=15.0)
+
+    loaded = load_video_frames(before, before, stages, max_frames=128)
+
+    assert [f.index for f in loaded.before] == list(range(20))
+    natives = native_images(before, loaded.before[0].image.shape)
+    assert [source_of(f.image, natives) for f in loaded.before] == [
+        k for k in range(10) for _ in range(2)
+    ]
+    assert loaded.strided_before == 20
+
+
+@pytest.mark.parametrize("fps", [15.0, 24.0, 60.0, 120.0])
+def test_the_slots_hold_the_frames_ffmpeg_writes_at_30_fps(
+    tmp_path: Path, fps: float
+) -> None:
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 80, seed=1, fps=fps)
+    written = tmp_path / "ffmpeg"
+    written.mkdir()
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(before)]
+        + ["-r", "30", "-start_number", "0", str(written / "%d.png")],
+        check=True,
+    )
+    stages = build_stage_configs(
+        RunConfig(max_keyframes=64, frame_stride=2), "cpu"
+    )
+
+    loaded = load_video_frames(before, before, stages, max_frames=128)
+
+    shape = loaded.before[0].image.shape
+    natives = native_images(before, shape)
+    timeline = len(list(written.glob("*.png")))
+    assert loaded.strided_before == (timeline + 1) // 2
+    for frame in loaded.before:
+        png = cv2.cvtColor(
+            cv2.imread(str(written / f"{frame.index}.png")), cv2.COLOR_BGR2RGB
+        )
+        expected = cv2.resize(png, shape[1::-1], interpolation=cv2.INTER_AREA)
+        assert source_of(frame.image, natives) == source_of(expected, natives)
+
+
+def test_a_prediction_and_its_annotation_share_the_key_of_a_60_fps_slot(
+    tmp_path: Path,
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 60, seed=1, fps=60.0)
+    loaded = load_video_frames(before, before, TIMELINE, max_frames=128)
+    natives = native_images(before, loaded.before[0].image.shape)
+    # On a 60 fps clip, ffmpeg writes the native frame 21 as output frame 12.
+    annotated = 12
+    shown = next(f for f in loaded.before if source_of(f.image, natives) == 21)
+    intrinsics = Intrinsics(
+        fx=10.0, fy=10.0, cx=10.0, cy=10.0, width=20, height=20
+    )
+    posed = Frame(
+        epoch=Epoch.BEFORE,
+        index=shown.index,
+        timestamp_s=shown.timestamp_s,
+        intrinsics=intrinsics,
+        world_from_camera=SE3.identity(),
+        depth=np.full((20, 20), 5.0, dtype=np.float32),
+    )
+    xs = np.linspace(-0.5, 0.5, 5)
+    gx, gy = np.meshgrid(xs, xs)
+    points = np.stack([gx.ravel(), gy.ravel(), np.full(25, 5.0)], axis=1)
+    obj = ChangeObject3D(0, ChangeType.REMOVED, 0.5, {Epoch.BEFORE: points})
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[9:12, 9:12] = True
+    raw = {
+        "scene_type": "living_room",
+        "objects": [
+            {
+                "label": "thing",
+                "in_video1": True,
+                "in_video2": False,
+                "original_obj_idx": 0,
+            }
+        ],
+        "video1_objects": {0: {str(annotated): encode_mask(mask)}},
+        "video2_objects": {},
+        "comments": "",
+        "light_change": False,
+    }
+
+    predicted = project_to_pred_items(
+        [obj],
+        [posed],
+        [],
+        20,
+        20,
+        config=ProjectionConfig(splat_radius=0),
+        stride=3,
+    )
+    truth = gt_items(parse_pair_annotations("p", raw), 20, 20, stride=3)
+
+    assert shown.index == annotated
+    assert sorted(predicted[0].masks) == sorted(truth[0].masks) == [(1, 4)]
+
+
+def test_only_the_frames_of_the_kept_slots_are_decoded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stages = build_stage_configs(
+        RunConfig(max_keyframes=4, frame_stride=3), "cpu"
+    )
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 60, seed=1, fps=60.0)
+    asked: list[set[int]] = []
+    real = capture.read_frames_at
+
+    def spy(path: Path, indices: set[int]) -> object:
+        asked.append(set(indices))
+        return real(path, indices)
+
+    monkeypatch.setattr(capture, "read_frames_at", spy)
+
+    loaded = load_video_frames(before, before, stages, max_frames=128)
+
+    # 11 slots are on the stride; the cap of 4 keeps slots 0, 9, 21 and 30,
+    # which show the frames 0, 15, 39 and 57.
+    assert [f.index for f in loaded.before] == [0, 9, 21, 30]
+    assert asked == [{0, 15, 39, 57}] * 2
+    assert loaded.strided_before == 11
+
+
+def test_a_slot_whose_frame_cannot_be_decoded_is_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 60, seed=1, fps=60.0)
+    real = capture.read_frames_at
+
+    def lossy(path: Path, indices: set[int]) -> object:
+        return (f for f in real(path, indices) if f.index != 15)
+
+    monkeypatch.setattr(capture, "read_frames_at", lossy)
+
+    loaded = load_video_frames(before, before, TIMELINE, max_frames=128)
+
+    assert [f.index for f in loaded.before] == [
+        0,
+        3,
+        6,
+        12,
+        15,
+        18,
+        21,
+        24,
+        27,
+        30,
+    ]
+
+
+def test_a_video_without_timestamps_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 30, seed=1)
+    monkeypatch.setattr(capture, "read_timestamps", lambda path: [])
+
+    with pytest.raises(ValueError, match="a.mp4"):
+        load_video_frames(before, before, TIMELINE, max_frames=128)

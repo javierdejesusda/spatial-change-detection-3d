@@ -68,11 +68,15 @@ class RunConfig(BaseModel):
         frame_stride: When set, each video contributes every frame whose
             index is a multiple of this stride instead of the keyframes the
             sharpness and overlap rules pick: no frame is dropped for being
-            blurry or redundant. Only above the keyframe cap (the smaller of
-            ``max_keyframes`` and half the views the reconstruction accepts)
-            are the frames thinned, evenly, keeping the first and the last;
-            the run metadata then says how many frames were on the stride.
-            At least 1, or ``None`` for the usual keyframes.
+            blurry or redundant. The index is the slot on the 30 fps timeline
+            that ``ffmpeg -r 30`` writes, the one annotations count, not the
+            position in the stream; they differ for a video that is not 30
+            fps, where a frame can fill no slot or several. Only above the
+            keyframe cap (the smaller of ``max_keyframes`` and half the
+            views the reconstruction accepts) are the frames thinned,
+            evenly, keeping the first and the last; the run metadata then
+            says how many frames were on the stride. At least 1, or
+            ``None`` for the usual keyframes.
         seed: Seed of every random search and subsampling, at least 0.
         stages: Overrides of the stage configs, by stage name and then by
             field name, for example ``{"appearance": {"changed_below":
@@ -173,9 +177,10 @@ class StageConfigs:
         max_keyframes: Keyframes kept per video.
         backbone_long_side: Longest side of the frames given to the
             reconstruction.
-        frame_stride: Stride of the frames each video contributes, thinned
-            evenly only above the keyframe cap and then recorded in the run
-            metadata, or ``None`` for the usual keyframes.
+        frame_stride: Stride, in slots of the 30 fps timeline, of the frames
+            each video contributes, thinned evenly only above the keyframe
+            cap and then recorded in the run metadata, or ``None`` for the
+            usual keyframes.
         fusion_voxel_size: Voxel edge that thins a fused cloud, or ``None``.
         min_confidence: Pixels with a lower confidence stay out of the
             fused clouds.

@@ -8,9 +8,15 @@ import cv2
 import numpy as np
 import pytest
 
-from spatial_change.capture.video import probe_video, read_frames
+from spatial_change.capture.video import (
+    probe_video,
+    read_frames,
+    read_frames_at,
+    read_timestamps,
+)
 
 MakeVideo = Callable[..., Path]
+REAL_CAPTURE = cv2.VideoCapture
 
 
 def test_probe_reports_written_properties(make_video: MakeVideo) -> None:
@@ -154,3 +160,126 @@ def test_rotation_metadata_swaps_the_reported_and_decoded_size(
 
     assert (info.width, info.height) == (120, 160)
     assert frame.image.shape == (160, 120, 3)
+
+
+class CountingCapture:
+    """Delegates to a real capture and counts how often it is asked to work.
+
+    A plain wrapper is used because subclassing ``cv2.VideoCapture`` crashes
+    the interpreter when the subclass is garbage collected.
+    """
+
+    grabs = 0
+    retrieves = 0
+
+    def __init__(self, filename: str) -> None:
+        self._cap = REAL_CAPTURE(filename)
+
+    def grab(self) -> bool:
+        type(self).grabs += 1
+        return bool(self._cap.grab())
+
+    def retrieve(self) -> tuple[bool, Any]:
+        type(self).retrieves += 1
+        return self._cap.retrieve()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cap, name)
+
+
+@pytest.fixture(name="counting")
+def counting_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> type[CountingCapture]:
+    CountingCapture.grabs = 0
+    CountingCapture.retrieves = 0
+    monkeypatch.setattr(cv2, "VideoCapture", CountingCapture)
+    return CountingCapture
+
+
+def test_read_timestamps_lists_the_time_of_every_frame(
+    make_video: MakeVideo,
+) -> None:
+    path = make_video(n_frames=20)
+
+    stamps = read_timestamps(path)
+
+    assert stamps == [frame.timestamp_s for frame in read_frames(path)]
+    assert stamps[:3] == pytest.approx([0.0, 1 / 30, 2 / 30])
+    assert len(stamps) == 20
+
+
+def test_read_timestamps_reports_the_time_the_file_gives(
+    make_video: MakeVideo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = make_video(n_frames=4)
+
+    class SlowClockCapture(CountingCapture):
+        """Reports 50 ms more for every frame grabbed than the last."""
+
+        def get(self, prop: int) -> float:
+            if prop == cv2.CAP_PROP_POS_MSEC:
+                return 50.0 * type(self).grabs
+            return float(self._cap.get(prop))
+
+    SlowClockCapture.grabs = 0
+    monkeypatch.setattr(cv2, "VideoCapture", SlowClockCapture)
+
+    assert read_timestamps(path) == pytest.approx([0.05, 0.10, 0.15, 0.20])
+
+
+def test_read_timestamps_decodes_no_image(
+    make_video: MakeVideo, counting: type[CountingCapture]
+) -> None:
+    read_timestamps(make_video(n_frames=10))
+
+    assert counting.grabs >= 10
+    assert counting.retrieves == 0
+
+
+def test_read_timestamps_missing_path_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        read_timestamps(tmp_path / "absent.mp4")
+
+
+def test_read_frames_at_yields_the_named_frames_in_stream_order(
+    make_video: MakeVideo,
+) -> None:
+    path = make_video(n_frames=20)
+    every = {frame.index: frame for frame in read_frames(path)}
+
+    chosen = list(read_frames_at(path, {11, 3, 4}))
+
+    assert [frame.index for frame in chosen] == [3, 4, 11]
+    for frame in chosen:
+        assert frame.timestamp_s == every[frame.index].timestamp_s
+        np.testing.assert_array_equal(frame.image, every[frame.index].image)
+
+
+def test_read_frames_at_stops_after_the_last_named_frame(
+    make_video: MakeVideo, counting: type[CountingCapture]
+) -> None:
+    path = make_video(n_frames=20)
+
+    chosen = list(read_frames_at(path, [2, 5]))
+
+    assert len(chosen) == 2
+    assert counting.grabs == 6
+    assert counting.retrieves == 2
+
+
+def test_read_frames_at_skips_frames_the_video_does_not_have(
+    make_video: MakeVideo,
+) -> None:
+    path = make_video(n_frames=5)
+
+    assert [f.index for f in read_frames_at(path, [1, 40])] == [1]
+    assert list(read_frames_at(path, [])) == []
+
+
+@pytest.mark.parametrize("indices", [[0], []])
+def test_read_frames_at_missing_path_raises(
+    tmp_path: Path, indices: list[int]
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        list(read_frames_at(tmp_path / "absent.mp4", indices))

@@ -34,6 +34,7 @@ from spatial_change.evaluation import (
 )
 from spatial_change.evaluation import batch as batch_module
 from spatial_change.evaluation.batch import (
+    RECORD_VERSION,
     BatchSummary,
     PairEvent,
     PairRecord,
@@ -887,6 +888,16 @@ def test_the_digest_follows_the_frame_budget_that_runs() -> None:
     assert digest(max_keyframes=MAX_VIDEO_KEYFRAMES) == base
     assert digest(max_keyframes=48) != base
     assert digest(max_keyframes=12) not in {base, digest(max_keyframes=48)}
+
+
+def test_a_record_from_before_the_30_fps_timeline_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = settings_digest(CONFIG, MODELS, EVAL)
+    monkeypatch.setattr(batch_module, "RECORD_VERSION", 4)
+
+    assert RECORD_VERSION > 4
+    assert settings_digest(CONFIG, MODELS, EVAL) != base
 
 
 def test_where_things_live_does_not_change_the_settings(

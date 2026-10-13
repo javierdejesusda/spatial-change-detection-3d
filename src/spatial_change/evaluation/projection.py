@@ -176,8 +176,10 @@ def project_to_pred_items(
     """Projects objects into the sampled frames of both videos.
 
     Only frames whose index is a multiple of ``stride`` are used, keyed as
-    ``index // stride`` like the ground truth. Masks are resized to the
-    evaluation grid with nearest sampling.
+    ``index // stride`` like the ground truth. The frame index is a slot on
+    the 30 fps timeline of the annotations, which is what the pipeline gives
+    a frame on a fixed stride. Masks are resized to the evaluation grid with
+    nearest sampling.
 
     Args:
         objects: Predicted objects.
