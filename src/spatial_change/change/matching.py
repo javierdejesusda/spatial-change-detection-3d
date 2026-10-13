@@ -46,20 +46,22 @@ _UNCERTAIN_CEILING = 0.5
 
 @dataclass(frozen=True)
 class MatchConfig:
-    """Parameters of the association. The defaults are provisional.
+    """Parameters of the association.
 
-    They are placeholders until T22 calibrates them on real captures.
-    Lengths are in the units of the world frame, meters after the alignment
-    stage. The cost of a pair is the weighted sum of three terms that each
-    lie in ``[0, 1]``.
+    Apart from the gates, the defaults are provisional placeholders until T22
+    calibrates them on real captures. Lengths are in the units of the world
+    frame, meters after the alignment stage. The cost of a pair is the
+    weighted sum of three terms that each lie in ``[0, 1]``.
 
-    Three optional gates demote a change to UNCERTAIN, all off by default.
-    A demoted change keeps its boxes, label, evidence, displacement, and
-    rotation; only its type changes and its confidence is capped as for any
-    pair the association abstains from. It stays in the report, and the
-    evaluation leaves uncertain changes out of its headline scores unless
-    asked to count them. The gates run after the pairs are made, so they
-    never change which objects pair up or the ids of the changes.
+    Three gates demote a change to UNCERTAIN. The occluded share and box
+    volume gates are on by default and the confidence gate is off; None turns
+    any gate off. A demoted change keeps its boxes, label, evidence,
+    displacement, and rotation; only its type changes and its confidence is
+    capped as for any pair the association abstains from. It stays in the
+    report, and the evaluation leaves uncertain changes out of its headline
+    scores unless asked to count them. The gates run after the pairs are
+    made, so they never change which objects pair up or the ids of the
+    changes.
 
     Attributes:
         w_appearance: Weight of ``1 - cosine`` of the two features, at
@@ -94,20 +96,20 @@ class MatchConfig:
         candidate_overlap: Share of a candidate's points that must lie in an
             object's box for the candidate to count as its evidence, in
             ``(0, 1]``.
-        max_occluded_fraction: When set, a change is demoted to UNCERTAIN if
-            its occluded votes over its consistent, free, and occluded votes
+        max_occluded_fraction: A change is demoted to UNCERTAIN if its
+            occluded votes over its consistent, free, and occluded votes
             exceed this share, in ``[0, 1]``; a change with no such votes
             has the share 0. A high share means that most observations of
             the location were blocked by something nearer. None turns the
             gate off.
-        max_box_volume_m3: When set, a change is demoted to UNCERTAIN if
-            the volume of its largest box, before or after, exceeds this
-            many cubic meters, positive and finite. A box that large is
-            most often a wall, a door, or a whole piece of furniture that
-            was merged with its surroundings. None turns the gate off.
+        max_box_volume_m3: A change is demoted to UNCERTAIN if the volume
+            of its largest box, before or after, exceeds this many cubic
+            meters, positive and finite. A box that large is most often a
+            wall, a door, or a whole piece of furniture that was merged
+            with its surroundings. None turns the gate off.
         min_change_confidence: When set, a change is demoted to UNCERTAIN if
-            its confidence is below this value, in ``[0, 1]``. None turns
-            the gate off.
+            its confidence is below this value, in ``[0, 1]``. None, the
+            default, leaves the gate off.
         registration: Settings of the shape registration.
     """
 
@@ -123,8 +125,8 @@ class MatchConfig:
     min_rotation_deg: float = 10.0
     support_scale: float = 500.0
     candidate_overlap: float = 0.5
-    max_occluded_fraction: float | None = None
-    max_box_volume_m3: float | None = None
+    max_occluded_fraction: float | None = 0.001
+    max_box_volume_m3: float | None = 1.0
     min_change_confidence: float | None = None
     registration: RegistrationConfig = field(default_factory=RegistrationConfig)
 

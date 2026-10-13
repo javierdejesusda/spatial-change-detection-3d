@@ -190,19 +190,22 @@ run starts. For example:
     "appearance": { "changed_below": 0.3 },
     "lift": { "views": { "max_views": 7 } },
     "match": {
-      "max_box_volume_m3": 2.0,
-      "max_occluded_fraction": 0.6,
+      "max_occluded_fraction": null,
       "min_change_confidence": 0.2
     }
   }
 }
 ```
 
-The three `match` gates are off by default. Each demotes a change to
-`uncertain` (it keeps its boxes, label, and motion, and its confidence is capped at 0.5)
-when its largest box is too big, too many of its votes were occluded, or its
-confidence is too low. Field names and defaults of every stage are in the
-`*Config` dataclasses under `src/spatial_change/`.
+Each of the three `match` gates demotes a change to `uncertain` (it keeps its
+boxes, label, and motion, and its confidence is capped at 0.5) when its largest
+box is too big, too many of its votes were occluded, or its confidence is too
+low. The box volume gate (`max_box_volume_m3`, 1.0) and the occluded share gate
+(`max_occluded_fraction`, 0.001) are on by default, and so is one free vote per
+changed point (`visibility.min_free_votes`, 1). These defaults were chosen on the
+validation split. The confidence gate (`min_change_confidence`) is off. Set a
+gate to `null` under `stages.match` to turn it off. Field names and defaults of
+every stage are in the `*Config` dataclasses under `src/spatial_change/`.
 
 ## Evaluation
 

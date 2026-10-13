@@ -25,7 +25,7 @@ def test_defaults() -> None:
     assert config.confidence_slack == 1.0
     assert config.min_confidence == 0.1
     assert config.neighbourhood == 1
-    assert config.min_free_votes == 2
+    assert config.min_free_votes == 1
     assert config.min_consistent_votes == 1
     assert config.batch_size == 262_144
     assert config.device == "cpu"

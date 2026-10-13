@@ -22,13 +22,14 @@ from spatial_change.visibility import (
     VisibilityConfig,
 )
 
-SENSITIVE = VisibilityConfig(min_free_votes=1)
+STRICT = VisibilityConfig(min_free_votes=2)
 
 # Rates measured over seeds 0 to 2 (see the assertions below): free votes
 # on changed objects at least 0.544, CHANGED at least 0.472, PRESENT on
 # changed objects at most 0.345 (contact with the floor and the overlap of
 # a short move), PRESENT among observed static points at least 0.709, and
-# zero false CHANGED on static structure, also at min_free_votes=1.
+# zero false CHANGED on static structure, also at the stricter
+# min_free_votes=2.
 MIN_FREE_RATE = 0.45
 MIN_CHANGED_RATE = 0.35
 MAX_STATIC_CHANGED_RATE = 0.002
@@ -43,15 +44,15 @@ class SceneVotes:
     pair: SyntheticScenePair
     clouds: dict[Epoch, LabelledCloud]
     evidence: dict[Epoch, PointEvidence]
-    sensitive: dict[Epoch, PointEvidence]
+    strict: dict[Epoch, PointEvidence]
 
 
 @pytest.fixture(scope="module", params=SEEDS, ids=[f"seed{s}" for s in SEEDS])
 def votes(request: pytest.FixtureRequest) -> SceneVotes:
     default = scene_evidence(request.param, VisibilityConfig())
-    sensitive = scene_evidence(request.param, SENSITIVE)
+    strict = scene_evidence(request.param, STRICT)
     return SceneVotes(
-        default.pair, default.clouds, default.evidence, sensitive.evidence
+        default.pair, default.clouds, default.evidence, strict.evidence
     )
 
 
@@ -117,7 +118,7 @@ def test_the_occluded_object_collects_no_free_votes(votes: SceneVotes) -> None:
 
     for evidence in (
         votes.evidence[Epoch.BEFORE],
-        votes.sensitive[Epoch.BEFORE],
+        votes.strict[Epoch.BEFORE],
     ):
         assert evidence.free[selected].sum() == 0
         assert evidence.occluded[selected].sum() > 0
@@ -132,7 +133,7 @@ def test_the_unobserved_zone_is_only_unobserved(votes: SceneVotes) -> None:
 
     for evidence in (
         votes.evidence[Epoch.BEFORE],
-        votes.sensitive[Epoch.BEFORE],
+        votes.strict[Epoch.BEFORE],
     ):
         all_votes = evidence.counts.sum(axis=1)
         assert np.all(evidence.unobserved[selected] == all_votes[selected])
@@ -160,7 +161,7 @@ def test_static_structure_is_rarely_changed_and_mostly_present(
     selected = static_selection(votes, epoch)
     evidence = votes.evidence[epoch]
 
-    for checked in (evidence, votes.sensitive[epoch]):
+    for checked in (evidence, votes.strict[epoch]):
         assert rate(checked.states == PointState.CHANGED, selected) <= (
             MAX_STATIC_CHANGED_RATE
         )

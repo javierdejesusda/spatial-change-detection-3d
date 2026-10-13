@@ -350,37 +350,56 @@ def test_a_bad_override_fails_when_the_config_is_built(
         assert fragment in message
 
 
+def test_the_default_run_takes_the_match_and_visibility_defaults() -> None:
+    stages = build_stage_configs(RunConfig(), "cpu")
+
+    assert stages.match == MatchConfig(registration=stages.match.registration)
+    assert stages.visibility == VisibilityConfig()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("max_occluded_fraction", 0.001),
+        ("max_occluded_fraction", 0.3),
+        ("max_occluded_fraction", None),
         ("max_box_volume_m3", 0.5),
+        ("max_box_volume_m3", None),
         ("min_change_confidence", 0.1),
     ],
 )
-def test_a_gate_that_is_off_by_default_is_turned_on_from_the_config(
-    field: str, value: float
+def test_a_gate_is_set_from_the_config_and_the_others_keep_their_defaults(
+    field: str, value: float | None
 ) -> None:
     config = RunConfig(stages={"match": {field: value}})
 
     match = build_stage_configs(config, "cpu").match
 
     assert getattr(match, field) == value
-    off = [getattr(match, other) for other in GATES if other != field]
-    assert off == [None, None]
+    others = [name for name in GATES if name != field]
+    assert [getattr(match, name) for name in others] == [
+        getattr(MatchConfig(), name) for name in others
+    ]
 
 
-def test_a_gate_is_turned_on_from_a_json_file(tmp_path: Path) -> None:
+def test_a_gate_is_turned_off_from_a_json_file(tmp_path: Path) -> None:
     path = tmp_path / "config.json"
     path.write_text(
-        json.dumps({"stages": {"match": {"max_occluded_fraction": 0.001}}}),
+        json.dumps({"stages": {"match": {"max_occluded_fraction": None}}}),
         encoding="utf-8",
     )
 
     match = build_stage_configs(RunConfig.load(path), "cpu").match
 
-    assert match.max_occluded_fraction == 0.001
-    assert match.max_box_volume_m3 is None
+    assert match.max_occluded_fraction is None
+    assert match.max_box_volume_m3 == MatchConfig().max_box_volume_m3
+
+
+def test_the_free_votes_are_set_from_the_config() -> None:
+    config = RunConfig(stages={"visibility": {"min_free_votes": 3}})
+
+    visibility = build_stage_configs(config, "cpu").visibility
+
+    assert visibility.min_free_votes == 3
 
 
 def test_an_integer_is_a_valid_value_for_an_optional_float_field() -> None:

@@ -24,6 +24,7 @@ from pipeline_scenes import inert_models
 from rle_helpers import encode_mask
 
 from spatial_change.alignment import RefineConfig
+from spatial_change.change import MatchConfig
 from spatial_change.domain import ChangeType
 from spatial_change.evaluation import (
     SceneEval,
@@ -59,6 +60,7 @@ from spatial_change.pipeline import (
     StageEvent,
 )
 from spatial_change.pipeline.config import MAX_VIDEO_KEYFRAMES, StageConfigs
+from spatial_change.visibility import VisibilityConfig
 from spatial_change.visualization import RerunConfig
 
 CONFIG = RunConfig(device="cpu", describer="template")
@@ -925,12 +927,17 @@ def test_the_digest_follows_the_stage_settings_in_effect() -> None:
     later = digest(appearance={"changed_below": 0.3})
     nested = digest(lift={"views": {"max_views": 7}})
     ablated = digest(visibility={"veto": False})
-    gated = digest(match={"max_occluded_fraction": 0.001})
+    gated = digest(match={"max_occluded_fraction": 0.3})
+    ungated = digest(match={"max_occluded_fraction": None})
+    votes = VisibilityConfig().min_free_votes
 
-    assert len({base, later, nested, ablated, gated}) == 5
+    assert len({base, later, nested, ablated, gated, ungated}) == 6
     assert later == digest(appearance={"changed_below": 0.3})
     assert digest(appearance={"changed_below": 0.4}) == base
-    assert digest(match={"max_occluded_fraction": None}) == base
+    default_share = MatchConfig().max_occluded_fraction
+    assert digest(match={"max_occluded_fraction": default_share}) == base
+    assert digest(visibility={"min_free_votes": votes}) == base
+    assert digest(visibility={"min_free_votes": votes + 1}) != base
     assert digest() == base
 
 

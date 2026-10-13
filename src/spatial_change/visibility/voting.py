@@ -114,7 +114,7 @@ class VisibilityConfig:
     confidence_slack: float = 1.0
     min_confidence: float = DEFAULT_MIN_CONFIDENCE
     neighbourhood: int = 1
-    min_free_votes: int = 2
+    min_free_votes: int = 1
     min_consistent_votes: int = 1
     batch_size: int = 262_144
     device: str = "cpu"

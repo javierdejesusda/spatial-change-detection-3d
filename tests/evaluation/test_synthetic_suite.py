@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from pipeline_scenes import TEMPLATE, run_pair
+from pipeline_scenes import TEMPLATE, run_pair, staged
 from visibility_scenes import scene_clouds
 
 from spatial_change.evaluation.synthetic import (
@@ -15,9 +15,7 @@ from spatial_change.pipeline import RunConfig
 SEEDS = range(11)
 ABLATION_SEEDS = SEEDS[:3]
 MIN_F1 = 0.9
-NO_VETO = RunConfig.model_validate(
-    {**TEMPLATE.model_dump(), "stages": {"visibility": {"veto": False}}}
-)
+NO_VETO = staged(visibility={"veto": False})
 
 
 class Outcome(NamedTuple):

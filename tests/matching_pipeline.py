@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 from appearance_scenes import reconstruction
 from lifting_scenes import OracleSegmenter
+from matching_scenes import UNGATED
 from numpy.typing import NDArray
 from visibility_scenes import SceneEvidence
 
@@ -106,7 +107,7 @@ def run_pipeline(
     )
     describe_s = time.perf_counter() - started
     started = time.perf_counter()
-    changes = associate(described, candidates)
+    changes = associate(described, candidates, UNGATED)
     associate_s = time.perf_counter() - started
     seconds = {
         "lift": lift_s,

@@ -8,7 +8,14 @@ from typing import Any
 import numpy as np
 import pytest
 from appearance_scenes import reconstruction
-from pipeline_scenes import PATCH, TEMPLATE, Timeline, inert_models, run_pair
+from pipeline_scenes import (
+    PATCH,
+    TEMPLATE,
+    Timeline,
+    inert_models,
+    run_pair,
+    staged,
+)
 from rotations import rotation_z
 
 from spatial_change.cache import CacheKey, StageCache
@@ -796,10 +803,6 @@ def test_a_later_threshold_reuses_both_entries(
     assert result.report.metadata["cache_hits"] == "reconstruction,appearance"
     assert timeline.roles() == WARM_ROLES
     assert [len(entries(warm_cache, s)) for s in STAGE_DIRS] == [1, 1]
-
-
-def staged(**stages: dict[str, Any]) -> RunConfig:
-    return RunConfig.model_validate({**TEMPLATE.model_dump(), "stages": stages})
 
 
 def test_a_threshold_override_reuses_both_entries(

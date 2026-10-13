@@ -5,11 +5,12 @@ so the tests know the exact transform between two copies of one shape.
 """
 
 import itertools
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
-from spatial_change.change import Candidate
+from spatial_change.change import Candidate, MatchConfig
 from spatial_change.domain import (
     Epoch,
     EvidenceCounts,
@@ -21,7 +22,14 @@ _Vec3 = tuple[float, float, float]
 SPACING = 0.02
 CHAIR = (0.5, 0.4, 0.9)
 NOISE = 0.002
-EVIDENCE = EvidenceCounts(consistent=1, free=20, occluded=2, unobserved=3)
+EVIDENCE = EvidenceCounts(consistent=1, free=20, occluded=0, unobserved=3)
+# The default gates turned off, so that a test sees the changes as they are
+# made and not as the gates demote them.
+UNGATED_GATES: dict[str, Any] = {
+    "max_occluded_fraction": None,
+    "max_box_volume_m3": None,
+}
+UNGATED = MatchConfig(**UNGATED_GATES)
 
 
 def _face_points(

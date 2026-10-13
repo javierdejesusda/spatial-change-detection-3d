@@ -1,10 +1,12 @@
 import functools
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 
 import numpy as np
 import pytest
 from matching_scenes import (
+    UNGATED,
     box_surface,
     candidate_for,
     chair_pair,
@@ -117,11 +119,9 @@ def _inputs(
 
 def _run(
     scene: tuple[Sequence[Side], Sequence[Side]],
-    config: MatchConfig | None = None,
+    config: MatchConfig = UNGATED,
 ) -> tuple[Change, ...]:
     lifted, candidates = _inputs(scene)
-    if config is None:
-        return associate(lifted, candidates)
     return associate(lifted, candidates, config)
 
 
@@ -181,12 +181,38 @@ def _assert_only_the_box_is_demoted(
     _assert_demoted(gated[BOX], base[BOX])
 
 
-def test_the_gates_are_off_by_default() -> None:
+def test_the_occluded_and_volume_gates_are_on_by_default() -> None:
     config = MatchConfig()
 
-    assert config.max_occluded_fraction is None
-    assert config.max_box_volume_m3 is None
+    assert config.max_occluded_fraction == 0.001
+    assert config.max_box_volume_m3 == 1.0
     assert config.min_change_confidence is None
+
+
+def test_the_default_gates_demote_a_change_and_none_turns_them_off() -> None:
+    scene = _scene(
+        removed=_votes(free=9000, occluded=1000),
+        added=_votes(free=9000, occluded=1000),
+        removed_extent=(2.0, 1.0, 2.0),
+    )
+
+    base = _run(scene)
+    gated = _run(scene, MatchConfig())
+
+    assert [c.type for c in base] == [
+        ChangeType.MOVED,
+        ChangeType.REMOVED,
+        ChangeType.ADDED,
+    ]
+    assert gated[CHAIR] == base[CHAIR]
+    _assert_demoted(gated[BOX], base[BOX])
+    _assert_demoted(gated[SLAB], base[SLAB])
+    only_volume = _run(scene, MatchConfig(max_occluded_fraction=None))
+    only_share = _run(scene, MatchConfig(max_box_volume_m3=None))
+    _assert_demoted(only_volume[BOX], base[BOX])
+    assert only_volume[SLAB] == base[SLAB]
+    _assert_demoted(only_share[BOX], base[BOX])
+    _assert_demoted(only_share[SLAB], base[SLAB])
 
 
 def test_a_change_with_too_many_occluded_votes_is_demoted() -> None:
@@ -196,7 +222,7 @@ def test_a_change_with_too_many_occluded_votes_is_demoted() -> None:
     )
     base = _run(scene)
 
-    gated = _run(scene, MatchConfig(max_occluded_fraction=0.3))
+    gated = _run(scene, replace(UNGATED, max_occluded_fraction=0.3))
 
     assert [c.type for c in base] == [
         ChangeType.MOVED,
@@ -225,7 +251,7 @@ def test_the_occluded_share_counts_the_votes_that_saw_the_location(
 ) -> None:
     scene = ([(_before(_gone(), 0, GREEN), votes)], [])
 
-    (change,) = _run(scene, MatchConfig(max_occluded_fraction=limit))
+    (change,) = _run(scene, replace(UNGATED, max_occluded_fraction=limit))
 
     expected = ChangeType.UNCERTAIN if demoted else ChangeType.REMOVED
     assert change.type is expected
@@ -236,7 +262,7 @@ def test_a_change_with_a_very_large_box_is_demoted() -> None:
     scene = _scene(removed_extent=(2.0, 0.2, 2.0))
     base = _run(scene)
 
-    gated = _run(scene, MatchConfig(max_box_volume_m3=0.3))
+    gated = _run(scene, replace(UNGATED, max_box_volume_m3=0.3))
 
     _assert_only_the_box_is_demoted(gated, base)
 
@@ -244,9 +270,9 @@ def test_a_change_with_a_very_large_box_is_demoted() -> None:
 def test_a_volume_equal_to_the_limit_is_kept() -> None:
     removed = _change(ChangeType.REMOVED, before=(1.0, 2.0, 0.5))
 
-    kept = _gated(removed, MatchConfig(max_box_volume_m3=1.0))
+    kept = _gated(removed, replace(UNGATED, max_box_volume_m3=1.0))
     over = _gated(
-        removed, MatchConfig(max_box_volume_m3=math.nextafter(1.0, 0.0))
+        removed, replace(UNGATED, max_box_volume_m3=math.nextafter(1.0, 0.0))
     )
 
     assert kept == removed
@@ -256,7 +282,7 @@ def test_a_volume_equal_to_the_limit_is_kept() -> None:
 def test_a_change_without_a_box_has_no_volume() -> None:
     boxless = _change(ChangeType.UNCERTAIN, confidence=0.3)
 
-    assert _gated(boxless, MatchConfig(max_box_volume_m3=0.1)) == boxless
+    assert _gated(boxless, replace(UNGATED, max_box_volume_m3=0.1)) == boxless
 
 
 @pytest.mark.parametrize("bigger_before", [True, False])
@@ -277,8 +303,8 @@ def test_the_larger_of_the_two_boxes_of_a_pair_decides_the_volume(
     assert base.type is ChangeType.MOVED
 
     # The whole L is about 0.15 m3 and its half about 0.03 m3.
-    kept = _gated(base, MatchConfig(max_box_volume_m3=0.2))
-    gated = _gated(base, MatchConfig(max_box_volume_m3=0.1))
+    kept = _gated(base, replace(UNGATED, max_box_volume_m3=0.2))
+    gated = _gated(base, replace(UNGATED, max_box_volume_m3=0.1))
 
     assert kept == base
     _assert_demoted(gated, base)
@@ -289,7 +315,7 @@ def test_a_change_with_a_low_confidence_is_demoted() -> None:
     base = _run(scene)
     assert base[BOX].confidence < 0.1
 
-    gated = _run(scene, MatchConfig(min_change_confidence=0.1))
+    gated = _run(scene, replace(UNGATED, min_change_confidence=0.1))
 
     _assert_only_the_box_is_demoted(gated, base)
 
@@ -299,10 +325,10 @@ def test_a_confidence_equal_to_the_limit_is_kept() -> None:
     base = _run(scene)
     limit = base[BOX].confidence
 
-    kept = _gated(base[BOX], MatchConfig(min_change_confidence=limit))
+    kept = _gated(base[BOX], replace(UNGATED, min_change_confidence=limit))
     under = _gated(
         base[BOX],
-        MatchConfig(min_change_confidence=math.nextafter(limit, 1.0)),
+        replace(UNGATED, min_change_confidence=math.nextafter(limit, 1.0)),
     )
 
     assert kept == base[BOX]
@@ -313,7 +339,7 @@ def test_a_demoted_move_keeps_its_boxes_and_its_motion() -> None:
     scene = _scene(moved=_votes(free=5000, occluded=5000))
     base = _run(scene)
 
-    gated = _run(scene, MatchConfig(max_occluded_fraction=0.3))
+    gated = _run(scene, replace(UNGATED, max_occluded_fraction=0.3))
 
     assert base[CHAIR].type is ChangeType.MOVED
     assert gated[CHAIR].before_box is not None
@@ -337,11 +363,12 @@ def test_a_change_that_trips_several_gates_is_demoted_once() -> None:
         update={"type": ChangeType.UNCERTAIN, "confidence": CEILING}
     )
     gates = [
-        MatchConfig(max_occluded_fraction=0.3),
-        MatchConfig(max_box_volume_m3=0.3),
-        MatchConfig(min_change_confidence=0.8),
+        replace(UNGATED, max_occluded_fraction=0.3),
+        replace(UNGATED, max_box_volume_m3=0.3),
+        replace(UNGATED, min_change_confidence=0.8),
     ]
-    together = MatchConfig(
+    together = replace(
+        UNGATED,
         max_occluded_fraction=0.3,
         max_box_volume_m3=0.3,
         min_change_confidence=0.8,
@@ -363,9 +390,9 @@ def test_the_gates_leave_the_pairs_the_ids_and_the_sources_alone() -> None:
     after.append((_after(repainted, 2, FADED_BLUE), SEEN))
     lifted, candidates = _inputs((before, after))
     # Every confidence is below 1, so this demotes every change.
-    demote_all = MatchConfig(min_change_confidence=1.0)
+    demote_all = replace(UNGATED, min_change_confidence=1.0)
 
-    base = associate_with_sources(lifted, candidates)
+    base = associate_with_sources(lifted, candidates, UNGATED)
     gated = associate_with_sources(lifted, candidates, demote_all)
 
     assert [c.type for c, _ in base] == [

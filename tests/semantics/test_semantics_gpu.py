@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from appearance_scenes import reconstruction
 from matching_pipeline import run_pipeline
+from matching_scenes import UNGATED
 from visibility_scenes import labelled_cloud, vote_pair
 
 from spatial_change.change import (
@@ -104,6 +105,7 @@ def run() -> Iterator[Run]:
         changes = associate(
             LiftedObjects(labeled[Epoch.BEFORE], labeled[Epoch.AFTER]),
             ChangeCandidates(found[Epoch.BEFORE], found[Epoch.AFTER]),
+            UNGATED,
         )
         started = time.perf_counter()
         landmarks = extract_landmarks(

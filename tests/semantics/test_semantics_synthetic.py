@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from appearance_scenes import reconstruction
 from matching_pipeline import oracle_segmenter, run_pipeline
+from matching_scenes import UNGATED
 from visibility_scenes import SEEDS, scene_evidence
 
 from spatial_change.change import (
@@ -96,6 +97,7 @@ def outcome(seed: int) -> Outcome:
     changes = associate(
         LiftedObjects(labeled[Epoch.BEFORE], labeled[Epoch.AFTER]),
         ChangeCandidates(found[Epoch.BEFORE], found[Epoch.AFTER]),
+        UNGATED,
     )
     cross = CrossEvidence(
         votes.evidence[Epoch.BEFORE], votes.evidence[Epoch.AFTER]

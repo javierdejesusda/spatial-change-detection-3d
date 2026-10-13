@@ -56,7 +56,7 @@ EXPECTED_KIND = {
     ObjectStatus.ADDED: ChangeType.ADDED,
     ObjectStatus.REMOVED: ChangeType.REMOVED,
 }
-MODEL = RunConfig(device="cpu", describer="vlm", voxel_size=None)
+MODEL = TEMPLATE.model_copy(update={"describer": "vlm"})
 SMALL_SCENE = SceneConfig(width=64, height=48, frames_per_epoch=6)
 """Runs in about a second and still reaches every stage on seed 0."""
 
@@ -510,6 +510,26 @@ def test_a_non_empty_out_dir_fails_before_any_model_loads(
     assert timeline.events == []
 
 
+def test_a_run_with_the_default_gates_reports_its_changes_with_boxes(
+    tmp_path: Path,
+) -> None:
+    pair = generate_scene_pair(SEEDS[0], SMALL_SCENE)
+    config = RunConfig(device="cpu", describer="template", voxel_size=None)
+    assert "match" not in config.stages
+
+    result = run_frames(
+        video_frames(pair, Epoch.BEFORE),
+        video_frames(pair, Epoch.AFTER),
+        tmp_path,
+        config,
+        synthetic_models(pair, Timeline()),
+    )
+
+    changes = result.report.changes
+    assert changes
+    assert all(c.before_box or c.after_box for c in changes)
+
+
 def test_overwrite_writes_into_a_non_empty_out_dir(tmp_path: Path) -> None:
     (tmp_path / "old.txt").write_text("x", encoding="utf-8")
     pair, _, _ = scene_clouds(SEEDS[0])
@@ -590,7 +610,7 @@ def test_the_memory_probe_reads_the_device_of_the_run(
         video_frames(pair, Epoch.BEFORE),
         video_frames(pair, Epoch.AFTER),
         tmp_path,
-        RunConfig(device="cuda:1", describer="template", voxel_size=None),
+        TEMPLATE.model_copy(update={"device": "cuda:1"}),
         synthetic_models(pair, Timeline()),
     )
 

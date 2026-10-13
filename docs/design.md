@@ -93,8 +93,9 @@ low-confidence pixels.
 | occluded | A nearer surface blocks the view. |
 | unobserved | The point is outside the frame, or its depth is unusable. |
 
-A point is `changed` with at least two free votes and more free than consistent
-ones. Otherwise it is `present` with one consistent vote, and else `unknown`.
+A point is `changed` with at least one free vote (`visibility.min_free_votes`)
+and more free than consistent ones. Otherwise it is `present` with one
+consistent vote, and else `unknown`.
 This is the veto: occluded and unobserved votes can never make a point changed,
 so an object that was hidden, or never seen, is not reported as removed or
 added. A switch (`visibility.veto`) turns the veto off for ablations; it floods
@@ -145,9 +146,10 @@ registration fits worse than 0.85, or its cost reaches 0.9.
   support factor, `1 - exp(-n / 500)`, for the `n` observations that saw the
   location, so a change seen by few frames scores low. An abstention is capped
   at 0.5.
-- Three optional gates (`match.max_occluded_fraction`, `match.max_box_volume_m3`,
+- Three gates (`match.max_occluded_fraction`, `match.max_box_volume_m3`,
   `match.min_change_confidence`) demote a change to `uncertain` after the pairs
-  are made. They are off by default.
+  are made. The first two are on by default, with the values chosen on the
+  validation split, and the confidence gate is off. A gate set to `null` is off.
 
 ### Labels, landmarks, and language
 

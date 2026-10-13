@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 from matching_pipeline import oracle_segmenter
+from matching_scenes import UNGATED_GATES
 from numpy.typing import NDArray
 from visibility_scenes import SEEDS, scene_clouds
 
@@ -32,7 +33,31 @@ from spatial_change.ports import ReconstructionResult
 from spatial_change.synthetic.scene import SyntheticScenePair
 
 PATCH = 8
-TEMPLATE = RunConfig(device="cpu", describer="template", voxel_size=None)
+# The synthetic runs see the changes as the matcher makes them, so the
+# default gates that demote a change are off.
+TEMPLATE = RunConfig(
+    device="cpu",
+    describer="template",
+    voxel_size=None,
+    stages={"match": UNGATED_GATES},
+)
+
+
+def staged(**stages: dict[str, Any]) -> RunConfig:
+    """Lays stage settings over those of the template config.
+
+    Args:
+        **stages: Settings by stage name. A stage that the template also sets
+            keeps the template's other settings.
+
+    Returns:
+        The template config with the settings merged per stage.
+    """
+    merged = {
+        name: {**TEMPLATE.stages.get(name, {}), **stages.get(name, {})}
+        for name in TEMPLATE.stages.keys() | stages.keys()
+    }
+    return RunConfig.model_validate({**TEMPLATE.model_dump(), "stages": merged})
 
 
 def inert_models(**ids: str) -> Models:

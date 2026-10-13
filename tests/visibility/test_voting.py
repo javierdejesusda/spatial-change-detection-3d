@@ -313,6 +313,11 @@ def test_changed_needs_min_free_votes_and_more_free_than_consistent() -> None:
     assert state_of(3, 2, config) == PointState.PRESENT
 
 
+def test_one_free_vote_without_a_consistent_one_is_changed_by_default() -> None:
+    assert state_of(0, 1, DEFAULT) == PointState.CHANGED
+    assert state_of(1, 1, DEFAULT) == PointState.PRESENT
+
+
 def test_min_free_votes_is_a_threshold() -> None:
     config = VisibilityConfig(neighbourhood=0, min_free_votes=3)
 

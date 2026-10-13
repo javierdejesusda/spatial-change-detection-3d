@@ -73,13 +73,10 @@ def _inputs(
 def _associate(
     before: Sequence[ObjectInstance],
     after: Sequence[ObjectInstance],
-    config: MatchConfig | None = None,
     evidence: EvidenceCounts = EVIDENCE,
 ) -> tuple[Change, ...]:
     lifted, candidates = _inputs(before, after, evidence)
-    if config is None:
-        return associate(lifted, candidates)
-    return associate(lifted, candidates, config)
+    return associate(lifted, candidates)
 
 
 def _center(box: BoxModel) -> NDArray[np.float64]:
