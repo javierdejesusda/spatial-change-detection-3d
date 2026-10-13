@@ -283,3 +283,74 @@ def test_read_frames_at_missing_path_raises(
 ) -> None:
     with pytest.raises(FileNotFoundError):
         list(read_frames_at(tmp_path / "absent.mp4", indices))
+
+
+Reader = Callable[[Path], object]
+
+READERS = [
+    pytest.param(probe_video, id="probe_video"),
+    pytest.param(lambda path: list(read_frames(path)), id="read_frames"),
+    pytest.param(read_timestamps, id="read_timestamps"),
+    pytest.param(
+        lambda path: list(read_frames_at(path, [0])), id="read_frames_at"
+    ),
+]
+
+
+@pytest.fixture(name="no_decoder")
+def no_decoder_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("a decoder was opened")
+
+    monkeypatch.setattr(cv2, "VideoCapture", refuse)
+
+
+@pytest.mark.usefixtures("no_decoder")
+@pytest.mark.parametrize("read", READERS)
+def test_a_playlist_or_script_saved_as_mp4_is_refused_before_any_decoder_opens(
+    crafted_video: Path, read: Reader
+) -> None:
+    with pytest.raises(
+        ValueError, match=r"not an MP4 or MOV video: .*evil\.mp4"
+    ):
+        read(crafted_video)
+
+
+@pytest.mark.parametrize("read", READERS)
+def test_a_script_naming_a_real_clip_is_not_followed_to_it(
+    script_naming_a_clip: Path, read: Reader
+) -> None:
+    with pytest.raises(
+        ValueError, match=r"not an MP4 or MOV video: .*script\.mp4"
+    ):
+        read(script_naming_a_clip)
+
+
+@pytest.mark.parametrize("read", READERS)
+def test_the_decoder_is_given_an_absolute_name(
+    make_video: MakeVideo, monkeypatch: pytest.MonkeyPatch, read: Reader
+) -> None:
+    clip = make_video(n_frames=10)
+    monkeypatch.chdir(clip.parent)
+    opened: list[str] = []
+
+    def record(name: str) -> cv2.VideoCapture:
+        opened.append(name)
+        return REAL_CAPTURE(name)
+
+    monkeypatch.setattr(cv2, "VideoCapture", record)
+
+    read(Path(clip.name))
+
+    assert opened
+    assert all(Path(name).is_absolute() for name in opened)
+
+
+@pytest.mark.parametrize("read", READERS)
+def test_a_clip_is_read_whatever_its_extension_when_it_starts_like_mp4(
+    make_video: MakeVideo, tmp_path: Path, read: Reader
+) -> None:
+    moved = tmp_path / "clip.mov"
+    shutil.copy(make_video(n_frames=10), moved)
+
+    assert read(moved)

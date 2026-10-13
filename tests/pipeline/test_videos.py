@@ -665,6 +665,18 @@ def test_a_video_without_timestamps_is_an_error(
         load_video_frames(before, before, TIMELINE, max_frames=128)
 
 
+def test_a_corrupt_timestamp_is_an_error_and_not_a_huge_timeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 30, seed=1)
+    monkeypatch.setattr(capture, "read_timestamps", lambda path: [0.0, 1e12])
+
+    with pytest.raises(ValueError, match=r"a\.mp4: .*longer than") as caught:
+        load_video_frames(before, before, TIMELINE, max_frames=128)
+
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
 ONE_EACH = build_stage_configs(
     RunConfig(max_keyframes=64, frame_stride=1), "cpu"
 )

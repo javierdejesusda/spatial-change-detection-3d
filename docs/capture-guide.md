@@ -38,6 +38,12 @@ reconstruct the scene and compare it reliably.
 - Record at 720p or 1080p, 30 fps. Higher resolutions are slower to process
   and add little.
 - Keep exposure and focus steady if your camera app allows locking them.
+- Use the file the phone saves, an MP4 or a MOV. Only those two formats are
+  read, judged by the start of the file and not by its name, so a video in
+  another container (AVI, MKV, WebM) is refused and has to be converted first.
+- Keep each video under an hour. When frames are picked on a fixed stride,
+  as the evaluation does, a longer video, or one whose timestamps are
+  corrupt, is refused.
 
 ## What the system cannot detect
 

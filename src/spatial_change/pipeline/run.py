@@ -160,8 +160,8 @@ def run_videos(
             false.
         FileNotFoundError: If a video does not exist or is not a file. Both
             are checked before the folder is touched.
-        ValueError: If a video cannot be decoded or a stage rejects its
-            input.
+        ValueError: If a video is not an MP4 or MOV file, cannot be decoded,
+            or a stage rejects its input.
     """
     _check_videos(before_path, after_path)
     prepare_out_dir(out_dir, overwrite)

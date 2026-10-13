@@ -16,6 +16,13 @@ import numpy as np
 ANNOTATION_FPS = 30.0
 """Rate of the timeline annotation frame indices are counted on."""
 
+MAX_TIMELINE_S = 3600.0
+"""Longest timeline, in seconds, that is built.
+
+A corrupt timestamp far in the future would otherwise make the list of slots
+grow without bound.
+"""
+
 _TOLERANCE_TICKS = 1.1
 """Gap, in output ticks, past which ffmpeg drops or repeats frames."""
 
@@ -109,7 +116,9 @@ def cfr_source_indices(
 
     Raises:
         ValueError: If there is no frame, the durations do not pair with the
-            times, or ``fps`` is not positive.
+            times, ``fps`` is not positive, or the last frame ends after
+            ``MAX_TIMELINE_S`` seconds. That is checked before any slot is
+            made, so a corrupt timestamp cannot exhaust memory.
     """
     if not times_s:
         raise ValueError("a video needs at least one frame")
@@ -120,6 +129,16 @@ def cfr_source_indices(
         durations_s = [*gaps, gaps[-1] if gaps else 1 / fps]
     elif len(durations_s) != len(times_s):
         raise ValueError("a frame needs one duration per frame")
+    length_s = max(
+        time_s + duration_s
+        for time_s, duration_s in zip(times_s, durations_s, strict=True)
+    )
+    if length_s > MAX_TIMELINE_S:
+        raise ValueError(
+            f"timeline of {length_s:.0f} s is longer than the limit of "
+            f"{MAX_TIMELINE_S:.0f} s: the timestamps are corrupt or the "
+            "video is too long"
+        )
     sources: list[int] = []
     for index, (time_s, duration_s) in enumerate(
         zip(times_s, durations_s, strict=True)

@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from spatial_change.capture.container import ISO_BMFF_DEMUXERS
+
 TIMEOUT_S = 60.0
 """Seconds ffprobe may take to list the packets of one video."""
 
@@ -115,7 +117,9 @@ def read_container_durations(
     The video is named to ffprobe as ``file:`` and its absolute path, so a
     name such as ``concat:...``, ``subfile,...`` or ``http://...`` is read as
     the file it is and not as a protocol, and a name starting with a dash is
-    not read as an option.
+    not read as an option. ffprobe is also limited to the ``file`` protocol
+    and the MP4 and MOV demuxer: the ``file`` protocol alone would still let a
+    playlist or script saved under an ``.mp4`` name make it read other files.
 
     Args:
         path: Video file path.
@@ -130,8 +134,10 @@ def read_container_durations(
         return None
     argv = [executable, "-v", "error", "-select_streams", "v:0"]
     argv += ["-show_entries", "packet=pts,duration,flags:stream=time_base"]
-    argv += ["-of", "json", "-i", f"file:{path.absolute()}"]
+    argv += ["-protocol_whitelist", "file"]
+    argv += ["-format_whitelist", ISO_BMFF_DEMUXERS]
     try:
+        argv += ["-of", "json", "-i", f"file:{path.absolute()}"]
         result = subprocess.run(
             argv,
             capture_output=True,

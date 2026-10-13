@@ -256,7 +256,9 @@ def _strided_frames(
         durations were used.
 
     Raises:
-        ValueError: If no frame is left.
+        ValueError: If no frame is left, the video is not an MP4 or MOV file,
+            or its timeline is longer than ``MAX_TIMELINE_S``. The video
+            is named in the message.
     """
     import spatial_change.capture as capture
     from spatial_change.capture import VideoFrame
@@ -269,7 +271,10 @@ def _strided_frames(
     container = capture.read_container_durations(path)
     if container is not None and len(container) != len(stamps):
         container = None
-    sources = cfr_source_indices(stamps, container)
+    try:
+        sources = cfr_source_indices(stamps, container)
+    except ValueError as error:
+        raise ValueError(f"{path}: {error}") from error
     slots = range(0, len(sources), stride)
     on_stride = len(slots)
     chosen = uniform(slots, cap) if on_stride > cap else list(slots)
@@ -330,7 +335,9 @@ def load_video_frames(
 
     Raises:
         FileNotFoundError: If a video does not exist.
-        ValueError: If a video cannot be decoded or has no sharp frame.
+        ValueError: If a video is not an MP4 or MOV file, cannot be decoded,
+            has no sharp frame, or has a timeline longer than
+            ``MAX_TIMELINE_S`` on a frame stride.
     """
     from spatial_change.capture import ResizePolicy, probe_video
     from spatial_change.capture.resize import resize_image

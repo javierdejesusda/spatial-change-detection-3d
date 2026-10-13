@@ -507,6 +507,36 @@ def test_ffprobe_lists_the_video_stream_packets_without_decoding(
     assert kwargs.get("shell", False) is False
 
 
+@pytest.mark.usefixtures("present")
+def test_ffprobe_is_limited_to_files_and_the_mp4_and_mov_demuxers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = FakeRun(completed(listing([packet(0, 20, "K__")])))
+    monkeypatch.setattr(subprocess, "run", run)
+
+    read_container_durations(Path("a.mp4"))
+
+    ((argv, _),) = run.calls
+    assert argv[argv.index("-protocol_whitelist") + 1] == "file"
+    demuxers = argv[argv.index("-format_whitelist") + 1]
+    assert demuxers == "mov,mp4,m4a,3gp,3g2,mj2"
+    assert argv.index("-protocol_whitelist") < argv.index("-i")
+    assert argv.index("-format_whitelist") < argv.index("-i")
+
+
+@pytest.mark.usefixtures("present")
+def test_a_working_folder_that_is_gone_gives_no_durations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def gone(self: Path) -> Path:
+        raise FileNotFoundError("the working folder is gone")
+
+    monkeypatch.setattr(Path, "absolute", gone)
+    monkeypatch.setattr(subprocess, "run", FakeRun(completed("")))
+
+    assert read_container_durations(Path("a.mp4")) is None
+
+
 def test_without_ffprobe_nothing_is_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -570,3 +600,17 @@ def test_a_real_clip_is_read_by_a_relative_name_that_looks_like_an_option(
 
     assert result is not None
     assert len(result) == 12
+
+
+@pytest.mark.skipif(ffprobe_path() is None, reason="no ffprobe")
+def test_ffprobe_does_not_follow_a_script_to_a_real_clip(
+    script_naming_a_clip: Path,
+) -> None:
+    assert read_container_durations(script_naming_a_clip) is None
+
+
+@pytest.mark.skipif(ffprobe_path() is None, reason="no ffprobe")
+def test_a_playlist_or_script_saved_as_mp4_gives_no_durations_and_no_error(
+    crafted_video: Path,
+) -> None:
+    assert read_container_durations(crafted_video) is None

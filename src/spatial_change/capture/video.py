@@ -1,7 +1,8 @@
 """Video decoding for phone recordings.
 
 Frames are decoded with OpenCV and converted to RGB at the decode boundary,
-so every image inside the package is an ``(H, W, 3)`` uint8 RGB array.
+so every image inside the package is an ``(H, W, 3)`` uint8 RGB array. Only
+MP4 and MOV files are opened (see ``container``).
 """
 
 import itertools
@@ -13,6 +14,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from numpy.typing import NDArray
+
+from spatial_change.capture.container import require_iso_base_media
 
 NOMINAL_FPS = 30.0
 """Frame rate assumed when a container reports none."""
@@ -56,6 +59,9 @@ class VideoFrame:
 def _capture(path: Path) -> Iterator[cv2.VideoCapture]:
     """Opens a capture with auto-orientation enabled and releases it on exit.
 
+    The file is opened by its absolute path, so a name such as
+    ``concat:a.mp4|b.mp4`` is read as the file it is and not as a protocol.
+
     Args:
         path: Video file path.
 
@@ -64,11 +70,14 @@ def _capture(path: Path) -> Iterator[cv2.VideoCapture]:
 
     Raises:
         FileNotFoundError: If the path does not exist.
-        ValueError: If OpenCV cannot open the file.
+        OSError: If the file exists but cannot be read.
+        ValueError: If the file is not an MP4 or MOV video, or OpenCV cannot
+            open it.
     """
     if not path.exists():
         raise FileNotFoundError(f"video not found: {path}")
-    cap = cv2.VideoCapture(str(path))
+    require_iso_base_media(path)
+    cap = cv2.VideoCapture(str(path.absolute()))
     try:
         if not cap.isOpened():
             raise ValueError(f"OpenCV cannot open video: {path}")
@@ -92,7 +101,8 @@ def probe_video(path: Path) -> VideoInfo:
 
     Raises:
         FileNotFoundError: If the path does not exist.
-        ValueError: If OpenCV cannot open the file or decode a frame.
+        ValueError: If the file is not an MP4 or MOV video, or OpenCV cannot
+            open it or decode a frame.
     """
     with _capture(path) as cap:
         fps = float(cap.get(cv2.CAP_PROP_FPS))
@@ -151,7 +161,8 @@ def read_frames(
         Frames with their stream index and timestamp.
 
     Raises:
-        ValueError: If ``stride`` is below 1 or OpenCV cannot open the file.
+        ValueError: If ``stride`` is below 1, the file is not an MP4 or MOV
+            video, or OpenCV cannot open it.
         FileNotFoundError: If the path does not exist.
     """
     if stride < 1:
@@ -192,7 +203,8 @@ def read_timestamps(path: Path) -> list[float]:
 
     Raises:
         FileNotFoundError: If the path does not exist.
-        ValueError: If OpenCV cannot open the file.
+        ValueError: If the file is not an MP4 or MOV video, or OpenCV cannot
+            open it.
     """
     with _capture(path) as cap:
         fps = _frame_rate(cap)
@@ -224,7 +236,8 @@ def read_frames_at(
 
     Raises:
         FileNotFoundError: If the path does not exist.
-        ValueError: If OpenCV cannot open the file.
+        ValueError: If the file is not an MP4 or MOV video, or OpenCV cannot
+            open it.
     """
     wanted = set(indices)
     last = max(wanted, default=-1)

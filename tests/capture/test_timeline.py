@@ -1,6 +1,11 @@
+import math
+
 import pytest
 
-from spatial_change.capture.timeline import cfr_source_indices
+from spatial_change.capture.timeline import (
+    MAX_TIMELINE_S,
+    cfr_source_indices,
+)
 
 TICK = 1 / 30
 
@@ -179,3 +184,42 @@ def test_durations_must_pair_with_the_times() -> None:
 def test_the_rate_must_be_positive() -> None:
     with pytest.raises(ValueError, match="positive"):
         cfr_source_indices([0.0], fps=0.0)
+
+
+def test_a_timeline_that_ends_at_the_cap_is_built() -> None:
+    times = [0.0, MAX_TIMELINE_S - 1]
+
+    sources = cfr_source_indices(times, [1.0, 1.0], fps=1.0)
+
+    assert len(sources) == MAX_TIMELINE_S
+
+
+def test_a_timeline_past_the_cap_is_refused_naming_its_length() -> None:
+    times = [0.0, MAX_TIMELINE_S]
+
+    with pytest.raises(
+        ValueError, match=r"3601 s.*longer than.*3600 s.*corrupt"
+    ):
+        cfr_source_indices(times, [1.0, 1.0], fps=1.0)
+
+
+@pytest.mark.parametrize(
+    ("times", "durations"),
+    [
+        ([0.0, 1e5], None),
+        ([0.0, 1e12], None),
+        ([0.0, 1.0], [TICK, 1e5]),
+        ([0.0, math.inf], None),
+    ],
+    ids=[
+        "jump of a day",
+        "jump past any video",
+        "huge duration",
+        "infinite time",
+    ],
+)
+def test_a_corrupt_timestamp_is_refused_before_any_slot_is_made(
+    times: list[float], durations: list[float] | None
+) -> None:
+    with pytest.raises(ValueError, match="longer than"):
+        cfr_source_indices(times, durations)
