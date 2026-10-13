@@ -35,8 +35,10 @@ class Predictions(NamedTuple):
     Attributes:
         height: Height of every mask.
         width: Width of every mask.
-        items: The objects, uncertain ones included, each drawn as a moved
-            object.
+        items: The objects, uncertain ones included. An uncertain change
+            with both boxes is drawn as a moved object, and one with a
+            single box (demoted by a gate of the matcher) in its one epoch,
+            as an added or removed object.
         uncertain: Ids of the objects that came from uncertain changes.
     """
 

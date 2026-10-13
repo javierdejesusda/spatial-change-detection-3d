@@ -121,11 +121,11 @@ class PairRecord(BaseModel):
         n_changes: Changes the run reported.
         n_uncertain: Of those, the ones the run could not classify.
         uncertain_as: What the metrics of this record did with them:
-            ``"drop"`` left them out, ``"moved"`` scored them as moved
-            objects. The predictions hold them either way, so a summary may
-            pool with the other setting; it then lists the pair with the
-            metrics for that setting, and ``result.json`` stays as it was
-            made.
+            ``"drop"`` left them out, ``"moved"`` scored them as drawn (see
+            ``PairEvalConfig``). The predictions hold them either way, so a
+            summary may pool with the other setting; it then lists the pair
+            with the metrics for that setting, and ``result.json`` stays as
+            it was made.
         n_scored: Objects visible in a scored frame, which are the ones that
             can match; the others are left out by the projection.
         changes_by_type: Changes by type, uncertain ones included.

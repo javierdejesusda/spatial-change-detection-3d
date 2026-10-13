@@ -925,10 +925,12 @@ def test_the_digest_follows_the_stage_settings_in_effect() -> None:
     later = digest(appearance={"changed_below": 0.3})
     nested = digest(lift={"views": {"max_views": 7}})
     ablated = digest(visibility={"veto": False})
+    gated = digest(match={"max_occluded_fraction": 0.001})
 
-    assert len({base, later, nested, ablated}) == 4
+    assert len({base, later, nested, ablated, gated}) == 5
     assert later == digest(appearance={"changed_below": 0.3})
     assert digest(appearance={"changed_below": 0.4}) == base
+    assert digest(match={"max_occluded_fraction": None}) == base
     assert digest() == base
 
 

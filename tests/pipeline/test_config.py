@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Optional
 
 import pytest
 from pydantic import ValidationError
@@ -41,6 +41,18 @@ class Outer:
     count: int = 3
     corner: tuple[int, int] = (0, 0)
     inner: Inner = Inner()
+
+
+GATES = ("max_occluded_fraction", "max_box_volume_m3", "min_change_confidence")
+
+
+@dataclass(frozen=True)
+class Limits:
+    ceiling: float | None = None
+    count: int | None = 3
+    name: str = "a"
+    share: Optional[float] = None  # noqa: UP045
+    mode: Literal["a", "b"] | None = "a"
 
 
 def test_the_defaults_are_valid_and_leave_the_stage_configs_alone() -> None:
@@ -304,6 +316,23 @@ def test_an_integer_is_a_valid_value_for_a_float_field() -> None:
         ({"appearance": {"min_views": 2.5}}, ["appearance.min_views"]),
         ({"appearance": {"min_views": True}}, ["appearance.min_views"]),
         ({"appearance": {"voxel_size": None}}, ["appearance.voxel_size"]),
+        ({"match": {"max_cost": None}}, ["match.max_cost"]),
+        (
+            {"match": {"max_occluded_fraction": "0.3"}},
+            ["match.max_occluded_fraction"],
+        ),
+        (
+            {"match": {"min_change_confidence": True}},
+            ["match.min_change_confidence"],
+        ),
+        (
+            {"match": {"max_box_volume_m3": [1.0]}},
+            ["match.max_box_volume_m3"],
+        ),
+        (
+            {"match": {"max_occluded_fraction": 1.5}},
+            ["match", "max_occluded_fraction"],
+        ),
         (
             {"rerun": {"change_colors": {"added": [1, 2, 3]}}},
             ["rerun.change_colors"],
@@ -319,6 +348,85 @@ def test_a_bad_override_fails_when_the_config_is_built(
     message = str(excinfo.value)
     for fragment in fragments:
         assert fragment in message
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_occluded_fraction", 0.001),
+        ("max_box_volume_m3", 0.5),
+        ("min_change_confidence", 0.1),
+    ],
+)
+def test_a_gate_that_is_off_by_default_is_turned_on_from_the_config(
+    field: str, value: float
+) -> None:
+    config = RunConfig(stages={"match": {field: value}})
+
+    match = build_stage_configs(config, "cpu").match
+
+    assert getattr(match, field) == value
+    off = [getattr(match, other) for other in GATES if other != field]
+    assert off == [None, None]
+
+
+def test_a_gate_is_turned_on_from_a_json_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"stages": {"match": {"max_occluded_fraction": 0.001}}}),
+        encoding="utf-8",
+    )
+
+    match = build_stage_configs(RunConfig.load(path), "cpu").match
+
+    assert match.max_occluded_fraction == 0.001
+    assert match.max_box_volume_m3 is None
+
+
+def test_an_integer_is_a_valid_value_for_an_optional_float_field() -> None:
+    match = build_stage_configs(
+        RunConfig(stages={"match": {"max_box_volume_m3": 2}}), "cpu"
+    ).match
+
+    assert match.max_box_volume_m3 == 2.0
+    assert isinstance(match.max_box_volume_m3, float)
+
+
+def test_a_field_that_is_none_takes_a_value_of_its_declared_type() -> None:
+    changed = override_fields(Limits(), {"ceiling": 0.5}, "limits")
+
+    assert changed == Limits(ceiling=0.5)
+    with pytest.raises(ValueError, match=r"limits\.ceiling"):
+        override_fields(Limits(), {"ceiling": "0.5"}, "limits")
+    with pytest.raises(ValueError, match=r"limits\.ceiling"):
+        override_fields(Limits(), {"ceiling": True}, "limits")
+
+
+def test_null_sets_an_optional_field_back_to_none() -> None:
+    changed = override_fields(
+        Limits(ceiling=0.5), {"ceiling": None, "count": None}, "limits"
+    )
+
+    assert changed == Limits(ceiling=None, count=None)
+
+
+def test_the_typing_spellings_of_optional_take_values_and_null() -> None:
+    changed = override_fields(Limits(), {"share": 0.5, "mode": None}, "limits")
+
+    assert changed == Limits(share=0.5, mode=None)
+    assert override_fields(changed, {"share": None}, "limits").share is None
+    assert override_fields(Limits(), {"mode": "b"}, "limits").mode == "b"
+
+
+def test_an_optional_field_that_has_a_value_keeps_its_type() -> None:
+    assert override_fields(Limits(), {"count": 4}, "limits").count == 4
+    with pytest.raises(ValueError, match=r"limits\.count"):
+        override_fields(Limits(), {"count": 4.5}, "limits")
+
+
+def test_null_is_refused_for_a_field_that_is_not_optional() -> None:
+    with pytest.raises(ValueError, match=r"limits\.name"):
+        override_fields(Limits(), {"name": None}, "limits")
 
 
 def test_a_stage_given_as_a_number_is_a_validation_error() -> None:

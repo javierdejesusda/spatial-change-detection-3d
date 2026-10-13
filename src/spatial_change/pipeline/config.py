@@ -12,7 +12,17 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Self
+from types import NoneType, UnionType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Self,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -82,12 +92,13 @@ class RunConfig(BaseModel):
             field name, for example ``{"appearance": {"changed_below":
             0.3}}``. An object on a field that holds a config replaces
             fields of that nested config, for example ``{"lift": {"views":
-            {"max_views": 7}}}``. They are applied on top of the defaults,
-            the seed, and the device, so they win. The stage names are the
-            config fields of ``StageConfigs``, the field names those of the
-            stage config, except ``visibility.device``, which the run
-            resolves from ``device``. Every override is checked when the
-            config is built.
+            {"max_views": 7}}}``. A null sets a field that may be None,
+            such as a gate of ``match``, back to None. They are applied on
+            top of the defaults, the seed, and the device, so they win. The
+            stage names are the config fields of ``StageConfigs``, the field
+            names those of the stage config, except ``visibility.device``,
+            which the run resolves from ``device``. Every override is
+            checked when the config is built.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -220,12 +231,42 @@ class StageConfigs:
     rerun: RerunConfig
 
 
-def _new_value(current: object, value: Any, path: str) -> object:
+_PLAIN_KINDS = (bool, int, float, str)
+_UNIONS = (Union, UnionType)
+
+
+def _without_none(declared: object) -> tuple[Any, bool]:
+    """Splits ``X | None`` into ``X`` and True; any other type is kept.
+
+    ``Optional[X]`` and ``Union[X, None]`` count as ``X | None``.
+    """
+    args = get_args(declared) if get_origin(declared) in _UNIONS else ()
+    members = [arg for arg in args if arg is not NoneType]
+    if NoneType in args and len(members) == 1:
+        return members[0], True
+    return declared, False
+
+
+def _new_value(
+    current: object, value: Any, path: str, declared: object = None
+) -> object:
     """Gives the new value of a field from the plain JSON value for it.
+
+    Args:
+        current: The value of the field now.
+        value: The plain JSON value for it.
+        path: Dotted path of the field in the messages.
+        declared: The declared type of the field. A plain type decides
+            which values fit it, so that a field that is None now still
+            takes one; ``X | None`` also takes null. Any other type leaves
+            it to the current value.
 
     Raises:
         ValueError: If the value does not fit the field.
     """
+    kind, optional = _without_none(declared)
+    if value is None and optional:
+        return None
     if is_dataclass(current) and not isinstance(current, type):
         if not isinstance(value, Mapping):
             raise ValueError(f"{path}: expected an object of fields")
@@ -237,8 +278,9 @@ def _new_value(current: object, value: Any, path: str) -> object:
             _new_value(item, new, f"{path}[{i}]")
             for i, (item, new) in enumerate(zip(current, value, strict=True))
         )
-    kind = type(current)
-    if kind not in (bool, int, float, str):
+    if kind not in _PLAIN_KINDS:
+        kind = type(current)
+    if kind not in _PLAIN_KINDS:
         raise ValueError(f"{path}: is not a plain setting")
     if kind is float and type(value) is int:
         return float(value)
@@ -256,7 +298,9 @@ def override_fields[T: DataclassInstance](
 
     An object on a field that holds a dataclass replaces fields of that
     nested dataclass, recursively. A list on a tuple field becomes a tuple
-    and an integer on a float field a float. Any other value must be of the
+    and an integer on a float field a float. Null sets a field declared
+    ``X | None`` to None, and a field that is None takes a value of ``X``
+    when ``X`` is bool, int, float or str. Any other value must be of the
     type of the field.
 
     Args:
@@ -273,6 +317,7 @@ def override_fields[T: DataclassInstance](
             with the dotted path of the field or of the config.
     """
     known = [f.name for f in fields(config)]
+    declared = get_type_hints(type(config))
     changes = {}
     for name, value in overrides.items():
         path = f"{where}.{name}"
@@ -280,7 +325,9 @@ def override_fields[T: DataclassInstance](
             raise ValueError(
                 f"{path}: unknown field, expected one of {', '.join(known)}"
             )
-        changes[name] = _new_value(getattr(config, name), value, path)
+        changes[name] = _new_value(
+            getattr(config, name), value, path, declared[name]
+        )
     try:
         return replace(config, **changes)
     except (TypeError, ValueError) as error:

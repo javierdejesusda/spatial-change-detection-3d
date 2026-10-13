@@ -817,6 +817,21 @@ def test_a_threshold_override_reuses_both_entries(
     assert comparable(result) != comparable(warm.cold)
 
 
+def test_a_match_gate_override_reuses_both_entries(
+    warm: Warm, warm_cache: Path, tmp_path: Path
+) -> None:
+    result, timeline = run_pair(
+        tmp_path / "out",
+        staged(match={"min_change_confidence": 1.0}),
+        cache_dir=warm_cache,
+    )
+
+    assert result.report.metadata["cache_hits"] == "reconstruction,appearance"
+    assert timeline.roles() == WARM_ROLES
+    assert [len(entries(warm_cache, s)) for s in STAGE_DIRS] == [1, 1]
+    assert comparable(result) != comparable(warm.cold)
+
+
 def test_a_comparison_override_recomputes_the_appearance_pass(
     warm_cache: Path, tmp_path: Path
 ) -> None:

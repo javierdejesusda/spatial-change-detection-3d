@@ -181,7 +181,10 @@ def _add_evaluate(
         "--uncertain-as",
         choices=("drop", "moved"),
         default="drop",
-        help="leave uncertain changes out or score them as moved",
+        help=(
+            "leave uncertain changes out or score them as drawn: moved, "
+            "or added or removed when they have a single box"
+        ),
     )
     evaluate.add_argument(
         "--summary-only",

@@ -39,7 +39,8 @@ from spatial_change.geometry import (
 _DEFAULT_LABEL = "object"
 # Confidence of an unmatched object that no candidate supports.
 _NO_SUPPORT = 0.5
-# Upper bound of the confidence of a pair that is not confirmed as moved.
+# Upper bound of the confidence of a change the association abstains from:
+# a pair that is not confirmed as moved, or a change a gate demoted.
 _UNCERTAIN_CEILING = 0.5
 
 
@@ -51,6 +52,14 @@ class MatchConfig:
     Lengths are in the units of the world frame, meters after the alignment
     stage. The cost of a pair is the weighted sum of three terms that each
     lie in ``[0, 1]``.
+
+    Three optional gates demote a change to UNCERTAIN, all off by default.
+    A demoted change keeps its boxes, label, evidence, displacement, and
+    rotation; only its type changes and its confidence is capped as for any
+    pair the association abstains from. It stays in the report, and the
+    evaluation leaves uncertain changes out of its headline scores unless
+    asked to count them. The gates run after the pairs are made, so they
+    never change which objects pair up or the ids of the changes.
 
     Attributes:
         w_appearance: Weight of ``1 - cosine`` of the two features, at
@@ -85,6 +94,20 @@ class MatchConfig:
         candidate_overlap: Share of a candidate's points that must lie in an
             object's box for the candidate to count as its evidence, in
             ``(0, 1]``.
+        max_occluded_fraction: When set, a change is demoted to UNCERTAIN if
+            its occluded votes over its consistent, free, and occluded votes
+            exceed this share, in ``[0, 1]``; a change with no such votes
+            has the share 0. A high share means that most observations of
+            the location were blocked by something nearer. None turns the
+            gate off.
+        max_box_volume_m3: When set, a change is demoted to UNCERTAIN if
+            the volume of its largest box, before or after, exceeds this
+            many cubic meters, positive and finite. A box that large is
+            most often a wall, a door, or a whole piece of furniture that
+            was merged with its surroundings. None turns the gate off.
+        min_change_confidence: When set, a change is demoted to UNCERTAIN if
+            its confidence is below this value, in ``[0, 1]``. None turns
+            the gate off.
         registration: Settings of the shape registration.
     """
 
@@ -100,14 +123,17 @@ class MatchConfig:
     min_rotation_deg: float = 10.0
     support_scale: float = 500.0
     candidate_overlap: float = 0.5
+    max_occluded_fraction: float | None = None
+    max_box_volume_m3: float | None = None
+    min_change_confidence: float | None = None
     registration: RegistrationConfig = field(default_factory=RegistrationConfig)
 
     def __post_init__(self) -> None:
         """Validates the parameters.
 
         Raises:
-            ValueError: If a weight, length, or share is out of its range or
-                not finite.
+            ValueError: If a weight, length, share, or gate that is set is out
+                of its range or not finite.
         """
         for name in ("w_appearance", "w_shape", "w_distance"):
             if not 0.0 <= getattr(self, name) < math.inf:
@@ -130,6 +156,13 @@ class MatchConfig:
             raise ValueError("support_scale must be positive and finite")
         if not 0.0 < self.candidate_overlap <= 1.0:
             raise ValueError("candidate_overlap must be within (0, 1]")
+        for name in ("max_occluded_fraction", "min_change_confidence"):
+            share = getattr(self, name)
+            if share is not None and not 0.0 <= share <= 1.0:
+                raise ValueError(f"{name} must be within [0, 1]")
+        volume = self.max_box_volume_m3
+        if volume is not None and not 0.0 < volume < math.inf:
+            raise ValueError("max_box_volume_m3 must be positive and finite")
 
 
 _DEFAULT_CONFIG = MatchConfig()
@@ -445,6 +478,87 @@ def _single(
     )
 
 
+def _occluded_fraction(evidence: EvidenceCounts) -> float:
+    """Gives the share of the votes that saw a location that were occluded.
+
+    Args:
+        evidence: The summed counts of the change.
+
+    Returns:
+        The occluded votes over the consistent, free, and occluded ones; 0
+        when there are none.
+    """
+    votes = evidence.consistent + evidence.free + evidence.occluded
+    return evidence.occluded / votes if votes else 0.0
+
+
+def _largest_volume(change: Change) -> float:
+    """Gives the volume of the larger box of a change, in cubic meters.
+
+    Returns:
+        The volume, 0 for a change with no box.
+    """
+    return max(
+        (
+            math.prod(box.extent)
+            for box in (change.before_box, change.after_box)
+            if box is not None
+        ),
+        default=0.0,
+    )
+
+
+def _trips_a_gate(change: Change, config: MatchConfig) -> bool:
+    """Tells whether a change is past any gate that is set."""
+    return (
+        (
+            config.max_occluded_fraction is not None
+            and _occluded_fraction(change.evidence)
+            > config.max_occluded_fraction
+        )
+        or (
+            config.max_box_volume_m3 is not None
+            and _largest_volume(change) > config.max_box_volume_m3
+        )
+        or (
+            config.min_change_confidence is not None
+            and change.confidence < config.min_change_confidence
+        )
+    )
+
+
+def _demoted(change: Change) -> Change:
+    """Turns a change into an UNCERTAIN one with the same boxes and motion.
+
+    The confidence is capped at the ceiling of the pairs the association
+    abstains from.
+    """
+    return change.model_copy(
+        update={
+            "type": ChangeType.UNCERTAIN,
+            "confidence": min(change.confidence, _UNCERTAIN_CEILING),
+        }
+    )
+
+
+def _apply_gates(
+    found: list[tuple[Change, ChangeSources]], config: MatchConfig
+) -> tuple[tuple[Change, ChangeSources], ...]:
+    """Demotes the changes that are past a gate to UNCERTAIN.
+
+    Args:
+        found: The changes with their sources, all formed.
+        config: Supplies the gates.
+
+    Returns:
+        The changes in the same order, with their sources.
+    """
+    return tuple(
+        (_demoted(change) if _trips_a_gate(change, config) else change, sources)
+        for change, sources in found
+    )
+
+
 def associate_with_sources(
     lifted: LiftedObjects,
     candidates: ChangeCandidates,
@@ -459,7 +573,8 @@ def associate_with_sources(
     as ``unknown_cost``. The pairs are those of a minimum-cost assignment
     that never makes a pair costing ``max_cost`` or more (see
     ``MatchConfig``). The confidence of every change is scaled down when few
-    observations saw its location.
+    observations saw its location. Last, the gates of ``config`` that are set
+    demote the changes past them to UNCERTAIN without touching the pairs.
 
     Args:
         lifted: The object instances of both directions; give them features
@@ -519,7 +634,7 @@ def associate_with_sources(
                     else ChangeSources(None, item)
                 )
                 found.append((change, sources))
-    return tuple(found)
+    return _apply_gates(found, config)
 
 
 def associate(

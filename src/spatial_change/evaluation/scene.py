@@ -7,8 +7,9 @@ objects, the grid, the projection of a whole run, and the scene that joins a
 projection with the ground truth.
 
 A run is projected once, with its uncertain changes drawn as moved objects
-and flagged. Whether they count is a choice of the scoring, made when the
-scene is built, so it can change without running the pipeline again.
+(or as added or removed ones, when a gate of the matcher left them a single
+epoch) and flagged. Whether they count is a choice of the scoring, made when
+the scene is built, so it can change without running the pipeline again.
 
 Importing this module loads the pipeline package, which does not load torch,
 transformers, open3d, or cv2.
@@ -53,9 +54,12 @@ class PairEvalConfig:
         max_length: Length of the longer side of the evaluation grid.
         projection: Settings of the depth-tested projection.
         uncertain_as: ``"drop"`` leaves out the changes the pipeline could
-            not classify, and ``"moved"`` scores them as moved objects, at
-            their own confidence. The metrics know only moved and static
-            objects, so there is no honest score for an uncertain one.
+            not classify, and ``"moved"`` scores them at their own
+            confidence, as they are drawn: an uncertain change with both
+            boxes as a moved object, and one with a single box (demoted by a
+            gate of the matcher) in its one epoch, as an added or removed
+            object. The metrics know only moved and static objects, so
+            there is no honest score for an uncertain one.
     """
 
     stride: int = DEFAULT_FRAME_STRIDE
@@ -87,11 +91,11 @@ def _points_by_epoch(
     """Gathers the object points of a change in the epochs it is present in.
 
     Raises:
-        ValueError: If the sources are not the objects the type of the
-            change is made from.
+        ValueError: If the sources are not the objects the boxes of the
+            change are made from.
     """
-    wants_before = change.type is not ChangeType.ADDED
-    wants_after = change.type is not ChangeType.REMOVED
+    wants_before = change.before_box is not None
+    wants_after = change.after_box is not None
     if (sources.before is not None) != wants_before or (
         sources.after is not None
     ) != wants_after:
@@ -107,13 +111,29 @@ def _points_by_epoch(
     return points
 
 
+def _drawn_kind(change: Change) -> ChangeType:
+    """Gives the kind of object an uncertain change is drawn as.
+
+    A pair is drawn as moved, and a change a gate of the matcher demoted
+    from added or removed keeps the one epoch it has.
+    """
+    if change.type is not ChangeType.UNCERTAIN:
+        return change.type
+    if change.before_box is None:
+        return ChangeType.ADDED
+    if change.after_box is None:
+        return ChangeType.REMOVED
+    return ChangeType.MOVED
+
+
 def change_objects(
     changes: Sequence[Change], sources: Mapping[str, ChangeSources]
 ) -> list[ChangeObject3D]:
     """Turns the changes of a run into objects the projection can draw.
 
-    An uncertain change is drawn as a moved object, since it has the points
-    of both epochs; whether it is scored is decided later.
+    An uncertain change is drawn as a moved object when it has the points
+    of both epochs, and as an added or removed one when it has only those of
+    one; whether it is scored is decided later.
 
     Args:
         changes: The changes of a report.
@@ -132,14 +152,12 @@ def change_objects(
         source = sources.get(change.change_id)
         if source is None:
             raise ValueError(f"{change.change_id}: the run kept no objects")
-        kind = (
-            ChangeType.MOVED
-            if change.type is ChangeType.UNCERTAIN
-            else change.type
-        )
         objects.append(
             ChangeObject3D(
-                index, kind, change.confidence, _points_by_epoch(change, source)
+                index,
+                _drawn_kind(change),
+                change.confidence,
+                _points_by_epoch(change, source),
             )
         )
     return objects
@@ -195,7 +213,7 @@ def run_pred_items(
 
     Returns:
         One item per change seen in a scored frame, uncertain ones included
-        and drawn as moved objects.
+        and drawn as ``change_objects`` draws them.
 
     Raises:
         ValueError: If the sources of the run do not fit its changes.

@@ -536,6 +536,16 @@ def test_a_change_with_little_evidence_has_low_confidence() -> None:
         ("min_rotation_deg", 181.0),
         ("candidate_overlap", 0.0),
         ("support_scale", 0.0),
+        ("max_occluded_fraction", -0.1),
+        ("max_occluded_fraction", 1.1),
+        ("max_occluded_fraction", float("nan")),
+        ("max_box_volume_m3", 0.0),
+        ("max_box_volume_m3", -1.0),
+        ("max_box_volume_m3", float("nan")),
+        ("max_box_volume_m3", float("inf")),
+        ("min_change_confidence", -0.1),
+        ("min_change_confidence", 1.1),
+        ("min_change_confidence", float("nan")),
     ],
 )
 def test_config_rejects_invalid_values(field: str, value: float) -> None:

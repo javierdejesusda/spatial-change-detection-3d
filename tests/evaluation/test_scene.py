@@ -70,6 +70,13 @@ def change(kind: ChangeType, confidence: float = 0.5) -> Change:
     )
 
 
+def demoted(kind: ChangeType, confidence: float = 0.2) -> Change:
+    """Gives a change of a kind that a gate of the matcher made uncertain."""
+    return change(kind, confidence).model_copy(
+        update={"type": ChangeType.UNCERTAIN}
+    )
+
+
 def sources(kind: ChangeType) -> ChangeSources:
     return ChangeSources(
         instance(Epoch.BEFORE, 0.0) if kind is not ChangeType.ADDED else None,
@@ -122,6 +129,22 @@ def test_an_uncertain_change_is_a_moved_object_at_its_own_confidence() -> None:
     np.testing.assert_array_equal(objects[0].points[Epoch.AFTER], after.points)
 
 
+@pytest.mark.parametrize(
+    ("kind", "epoch"),
+    [(ChangeType.ADDED, Epoch.AFTER), (ChangeType.REMOVED, Epoch.BEFORE)],
+)
+def test_a_demoted_change_is_drawn_in_the_one_epoch_it_has(
+    kind: ChangeType, epoch: Epoch
+) -> None:
+    gated = demoted(kind)
+
+    (obj,) = change_objects([gated], {gated.change_id: sources(kind)})
+
+    assert obj.change_type is kind
+    assert obj.score == 0.2
+    assert set(obj.points) == {epoch}
+
+
 def test_a_change_without_sources_is_an_error() -> None:
     with pytest.raises(ValueError, match="change-added"):
         change_objects([change(ChangeType.ADDED)], {})
@@ -144,6 +167,24 @@ def test_sources_that_disagree_with_the_type_are_an_error(
 ) -> None:
     with pytest.raises(ValueError, match="change-"):
         change_objects([change(kind)], {f"change-{kind.value}": wrong})
+
+
+@pytest.mark.parametrize(
+    ("kind", "wrong"),
+    [
+        (ChangeType.ADDED, sources(ChangeType.REMOVED)),
+        (ChangeType.ADDED, sources(ChangeType.MOVED)),
+        (ChangeType.REMOVED, sources(ChangeType.ADDED)),
+        (ChangeType.REMOVED, sources(ChangeType.MOVED)),
+    ],
+)
+def test_sources_that_disagree_with_a_demoted_change_are_an_error(
+    kind: ChangeType, wrong: ChangeSources
+) -> None:
+    gated = demoted(kind)
+
+    with pytest.raises(ValueError, match="change-"):
+        change_objects([gated], {gated.change_id: wrong})
 
 
 def test_the_pair_eval_config_validates_its_numbers() -> None:
