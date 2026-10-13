@@ -19,9 +19,10 @@ from typing import TYPE_CHECKING
 from spatial_change import __version__
 from spatial_change.cache import StageCache
 from spatial_change.change import (
+    ChangeSources,
     CrossAppearance,
     LiftedObjects,
-    associate,
+    associate_with_sources,
     compare_appearance,
     describe_instances,
     find_candidates,
@@ -33,6 +34,7 @@ from spatial_change.diagnostics.profiling import CudaMemoryProbe
 from spatial_change.domain import (
     ChangeReport,
     EpochReconstruction,
+    Frame,
     Sim3,
 )
 from spatial_change.pipeline.alignment import AlignedEpochs, align_epochs
@@ -56,7 +58,11 @@ from spatial_change.pipeline.stage_cache import (
     appearance_cached,
     reconstruct_cached,
 )
-from spatial_change.pipeline.videos import load_video_frames
+from spatial_change.pipeline.videos import (
+    WHOLE_IMAGE,
+    ImageWindow,
+    load_video_frames,
+)
 from spatial_change.ports import Describer
 from spatial_change.semantics import (
     ChangeFact,
@@ -76,6 +82,28 @@ MetadataValue = str | int | float | bool
 
 
 @dataclass(frozen=True, eq=False)
+class RoomScene:
+    """The posed frames and the objects behind the changes of a run.
+
+    An evaluation projects the objects into the frames to score them in 2D.
+
+    Attributes:
+        before_frames: The BEFORE frames in the room frame, with their depth
+            and confidence.
+        after_frames: The AFTER frames in the room frame, registered onto
+            the BEFORE epoch.
+        sources: The objects each change was made from, by change id.
+        after_window: The part of the AFTER image its frames show, which is
+            all of it unless the frames were cropped to the BEFORE aspect.
+    """
+
+    before_frames: tuple[Frame, ...]
+    after_frames: tuple[Frame, ...]
+    sources: Mapping[str, ChangeSources]
+    after_window: ImageWindow = WHOLE_IMAGE
+
+
+@dataclass(frozen=True, eq=False)
 class PipelineResult:
     """What a run produced.
 
@@ -88,6 +116,7 @@ class PipelineResult:
         seconds: Wall time of every stage that ran.
         room_from_world: The gravity alignment from the world frame of the
             joint reconstruction to the room frame of the report.
+        scene: The frames and objects the changes were found in.
     """
 
     report: ChangeReport
@@ -95,6 +124,7 @@ class PipelineResult:
     files: OutputFiles
     seconds: dict[str, float]
     room_from_world: Sim3
+    scene: RoomScene
 
 
 def run_videos(
@@ -160,6 +190,7 @@ def run_videos(
         clock,
         extra,
         cache_dir,
+        videos.after_window,
     )
 
 
@@ -211,6 +242,7 @@ def run_frames(
         StageClock(progress),
         {},
         cache_dir,
+        WHOLE_IMAGE,
     )
 
 
@@ -305,6 +337,7 @@ def _run(
     clock: StageClock,
     extra: Mapping[str, MetadataValue],
     cache_dir: Path | None,
+    after_window: ImageWindow,
 ) -> PipelineResult:
     """Runs every stage after decoding."""
     from spatial_change.reconstruction import reconstruct_joint
@@ -388,7 +421,8 @@ def _run(
         )
 
     with clock.stage("matching"):
-        changes = associate(labeled, candidates, stages.match)
+        matched = associate_with_sources(labeled, candidates, stages.match)
+        changes = tuple(change for change, _ in matched)
 
     with clock.stage("describing"):
         views = crops_for_changes(changes, before, after)
@@ -444,4 +478,10 @@ def _run(
         files=files,
         seconds=dict(clock.timings),
         room_from_world=aligned.room_from_world,
+        scene=RoomScene(
+            before_frames=tuple(before.frames),
+            after_frames=tuple(after.frames),
+            sources={change.change_id: sources for change, sources in matched},
+            after_window=after_window,
+        ),
     )

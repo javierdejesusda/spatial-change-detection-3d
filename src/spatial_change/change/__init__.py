@@ -31,7 +31,12 @@ from spatial_change.change.lifting import (
     lift_candidates,
     lift_change_candidates,
 )
-from spatial_change.change.matching import MatchConfig, associate
+from spatial_change.change.matching import (
+    ChangeSources,
+    MatchConfig,
+    associate,
+    associate_with_sources,
+)
 from spatial_change.change.unobserved import (
     UnobservedConfig,
     extract_unobserved,
@@ -43,6 +48,7 @@ __all__ = [
     "Candidate",
     "CandidateConfig",
     "ChangeCandidates",
+    "ChangeSources",
     "CrossAppearance",
     "DescriptorConfig",
     "LiftConfig",
@@ -51,6 +57,7 @@ __all__ = [
     "PointAppearance",
     "UnobservedConfig",
     "associate",
+    "associate_with_sources",
     "compare_appearance",
     "describe_instances",
     "extract_candidates",

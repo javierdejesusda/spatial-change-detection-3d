@@ -10,10 +10,12 @@ def test_package_exports_the_public_names() -> None:
     assert pipeline.__all__ == sorted(pipeline.__all__)
     assert set(pipeline.__all__) == {
         "STAGES",
+        "MetadataValue",
         "Models",
         "OutputFiles",
         "PipelineResult",
         "ProgressCallback",
+        "RoomScene",
         "RunConfig",
         "StageEvent",
         "default_models",

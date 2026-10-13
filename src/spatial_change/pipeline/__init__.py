@@ -12,13 +12,21 @@ from spatial_change.pipeline.progress import (
     StageEvent,
     format_event,
 )
-from spatial_change.pipeline.run import PipelineResult, run_frames, run_videos
+from spatial_change.pipeline.run import (
+    MetadataValue,
+    PipelineResult,
+    RoomScene,
+    run_frames,
+    run_videos,
+)
 
 __all__ = [
+    "MetadataValue",
     "Models",
     "OutputFiles",
     "PipelineResult",
     "ProgressCallback",
+    "RoomScene",
     "RunConfig",
     "STAGES",
     "StageEvent",

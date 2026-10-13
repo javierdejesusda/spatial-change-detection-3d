@@ -150,6 +150,19 @@ class _Pair:
     registration: Registration | None
 
 
+@dataclass(frozen=True, eq=False)
+class ChangeSources:
+    """The objects a change was made from.
+
+    Attributes:
+        before: The disappeared object, ``None`` for an added change.
+        after: The appeared object, ``None`` for a removed change.
+    """
+
+    before: ObjectInstance | None
+    after: ObjectInstance | None
+
+
 def _center_distance(before: ObjectInstance, after: ObjectInstance) -> float:
     """Measures the distance between the centers of two boxes."""
     return float(np.linalg.norm(after.box.center - before.box.center))
@@ -432,11 +445,11 @@ def _single(
     )
 
 
-def associate(
+def associate_with_sources(
     lifted: LiftedObjects,
     candidates: ChangeCandidates,
     config: MatchConfig = _DEFAULT_CONFIG,
-) -> tuple[Change, ...]:
+) -> tuple[tuple[Change, ChangeSources], ...]:
     """Pairs the disappeared objects with the appeared ones and classifies.
 
     The cost of every pair of a disappeared and an appeared object is the
@@ -456,10 +469,10 @@ def associate(
         config: Weights, gates, and thresholds.
 
     Returns:
-        The changes: first the pairs in the order of their disappeared
-        object, then the removed objects, then the added ones, each in the
-        order of ``lifted``. Their ids run ``change-0``, ``change-1``, and
-        so on.
+        Each change with the objects behind it: first the pairs in the order
+        of their disappeared object, then the removed objects, then the
+        added ones, each in the order of ``lifted``. The ids of the changes
+        run ``change-0``, ``change-1``, and so on.
 
     Raises:
         ValueError: If an instance is from the wrong epoch.
@@ -477,19 +490,18 @@ def associate(
     support_after = [
         _supporting(item, candidates.appeared, config) for item in after
     ]
-    changes: list[Change] = []
+    found: list[tuple[Change, ChangeSources]] = []
     change_ids = (f"change-{n}" for n in itertools.count())
     for row, col in zip(rows.tolist(), cols.tolist(), strict=True):
-        changes.append(
-            _moved_or_uncertain(
-                before[row],
-                after[col],
-                pairs[row][col],
-                _evidence(support_before[row] + support_after[col]),
-                config,
-                next(change_ids),
-            )
+        change = _moved_or_uncertain(
+            before[row],
+            after[col],
+            pairs[row][col],
+            _evidence(support_before[row] + support_after[col]),
+            config,
+            next(change_ids),
         )
+        found.append((change, ChangeSources(before[row], after[col])))
     matched_rows, matched_cols = set(rows.tolist()), set(cols.tolist())
     unmatched = (
         (ChangeType.REMOVED, before, support_before, matched_rows),
@@ -498,13 +510,44 @@ def associate(
     for kind, items, supports, matched in unmatched:
         for index, item in enumerate(items):
             if index not in matched:
-                changes.append(
-                    _single(
-                        item,
-                        supports[index],
-                        kind,
-                        next(change_ids),
-                        config,
-                    )
+                change = _single(
+                    item, supports[index], kind, next(change_ids), config
                 )
-    return tuple(changes)
+                sources = (
+                    ChangeSources(item, None)
+                    if kind is ChangeType.REMOVED
+                    else ChangeSources(None, item)
+                )
+                found.append((change, sources))
+    return tuple(found)
+
+
+def associate(
+    lifted: LiftedObjects,
+    candidates: ChangeCandidates,
+    config: MatchConfig = _DEFAULT_CONFIG,
+) -> tuple[Change, ...]:
+    """Pairs the disappeared objects with the appeared ones and classifies.
+
+    This is ``associate_with_sources`` without the objects behind each
+    change; see it for how the pairs are made.
+
+    Args:
+        lifted: The object instances of both directions.
+        candidates: The candidates that were lifted, whose evidence supports
+            the changes.
+        config: Weights, gates, and thresholds.
+
+    Returns:
+        The changes: first the pairs in the order of their disappeared
+        object, then the removed objects, then the added ones, each in the
+        order of ``lifted``. Their ids run ``change-0``, ``change-1``, and
+        so on.
+
+    Raises:
+        ValueError: If an instance is from the wrong epoch.
+    """
+    return tuple(
+        change
+        for change, _ in associate_with_sources(lifted, candidates, config)
+    )

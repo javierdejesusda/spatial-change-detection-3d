@@ -20,6 +20,7 @@ from spatial_change.change import (
     LiftedObjects,
     MatchConfig,
     associate,
+    associate_with_sources,
     matching,
 )
 from spatial_change.domain import (
@@ -56,17 +57,26 @@ _before = functools.partial(_instance, Epoch.BEFORE)
 _after = functools.partial(_instance, Epoch.AFTER)
 
 
+def _inputs(
+    before: Sequence[ObjectInstance],
+    after: Sequence[ObjectInstance],
+    evidence: EvidenceCounts = EVIDENCE,
+) -> tuple[LiftedObjects, ChangeCandidates]:
+    lifted = LiftedObjects(tuple(before), tuple(after))
+    candidates = ChangeCandidates(
+        tuple(candidate_for(i, evidence) for i in before),
+        tuple(candidate_for(i, evidence) for i in after),
+    )
+    return lifted, candidates
+
+
 def _associate(
     before: Sequence[ObjectInstance],
     after: Sequence[ObjectInstance],
     config: MatchConfig | None = None,
     evidence: EvidenceCounts = EVIDENCE,
 ) -> tuple[Change, ...]:
-    lifted = LiftedObjects(tuple(before), tuple(after))
-    candidates = ChangeCandidates(
-        tuple(candidate_for(i, evidence) for i in before),
-        tuple(candidate_for(i, evidence) for i in after),
-    )
+    lifted, candidates = _inputs(before, after, evidence)
     if config is None:
         return associate(lifted, candidates)
     return associate(lifted, candidates, config)
@@ -538,3 +548,57 @@ def test_instances_of_the_wrong_epoch_are_rejected() -> None:
 
     with pytest.raises(ValueError, match="disappeared"):
         associate(lifted, ChangeCandidates((), ()))
+
+
+def test_every_change_comes_with_the_objects_it_was_made_from() -> None:
+    blue = unit(0.0, 0.0, 1.0, 0.0)
+    faded_blue = unit(0.0, 0.0, 1.0, 1.0)
+    stayer, moved = chair_pair(0.4)
+    in_place = l_surface((6.0, 6.0, 0.2), seed=5)
+    again = l_surface((6.0, 6.0, 0.2), seed=6)
+    gone = box_surface((-3.0, 2.0, 0.3), (0.6, 0.6, 0.6), seed=3)
+    new = box_surface((3.0, -2.0, 0.05), (1.2, 0.3, 0.1), seed=4)
+    before = [
+        _before(stayer, 0),
+        _before(in_place, 1, feature=blue),
+        _before(gone, 2, feature=GREEN),
+    ]
+    after = [
+        _after(moved, 0),
+        _after(again, 1, feature=faded_blue),
+        _after(new, 2, feature=-GREEN),
+    ]
+    lifted, candidates = _inputs(before, after)
+
+    found = associate_with_sources(lifted, candidates)
+
+    assert tuple(change for change, _ in found) == associate(lifted, candidates)
+    assert [change.type for change, _ in found] == [
+        ChangeType.MOVED,
+        ChangeType.UNCERTAIN,
+        ChangeType.REMOVED,
+        ChangeType.ADDED,
+    ]
+    expected = [
+        (before[0], after[0]),
+        (before[1], after[1]),
+        (before[2], None),
+        (None, after[2]),
+    ]
+    for (change, sources), (was, now) in zip(found, expected, strict=True):
+        assert sources.before is was
+        assert sources.after is now
+        for source, box in (
+            (sources.before, change.before_box),
+            (sources.after, change.after_box),
+        ):
+            if source is None:
+                assert box is None
+            else:
+                assert box == BoxModel.from_box(source.box)
+
+
+def test_without_changes_there_are_no_sources() -> None:
+    lifted, candidates = _inputs([], [])
+
+    assert associate_with_sources(lifted, candidates) == ()

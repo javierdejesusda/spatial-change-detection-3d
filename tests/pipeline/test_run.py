@@ -2,6 +2,7 @@ import dataclasses
 import itertools
 from collections.abc import Callable
 from pathlib import Path
+from statistics import median
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from pipeline_scenes import (
 )
 from visibility_scenes import SEEDS, scene_clouds
 
+from spatial_change.capture import VideoInfo
 from spatial_change.domain import (
     ChangeReport,
     ChangeType,
@@ -28,8 +30,15 @@ from spatial_change.pipeline import (
     RunConfig,
     StageEvent,
     run_frames,
+    run_videos,
 )
+from spatial_change.pipeline import run as run_module
 from spatial_change.pipeline.outputs import OUTPUT_FILES
+from spatial_change.pipeline.videos import (
+    WHOLE_IMAGE,
+    ImageWindow,
+    LoadedVideos,
+)
 from spatial_change.semantics import INDOOR_OBJECTS, validate_description
 from spatial_change.synthetic.scene import (
     ObjectStatus,
@@ -240,6 +249,82 @@ def test_the_metadata_records_the_run(template_run: Run) -> None:
     assert metadata["floor_observed"] is True
     # The synthetic rig is 1.4 to 1.6 m above the floor.
     assert metadata["camera_height_m"] == pytest.approx(1.5, abs=0.1)
+
+
+def test_the_scene_has_the_sources_of_every_change(
+    template_run: Run,
+) -> None:
+    changes = template_run.result.report.changes
+    sources = template_run.result.scene.sources
+
+    assert set(sources) == {c.change_id for c in changes}
+    assert len(changes) > 0
+    for change in changes:
+        source = sources[change.change_id]
+        assert (source.before is not None) == (change.before_box is not None)
+        assert (source.after is not None) == (change.after_box is not None)
+        both = change.type in (ChangeType.MOVED, ChangeType.UNCERTAIN)
+        assert (source.before is not None and source.after is not None) == both
+        for instance, box in (
+            (source.before, change.before_box),
+            (source.after, change.after_box),
+        ):
+            if instance is not None and box is not None:
+                assert box.to_box().contains(instance.points).mean() >= 0.99
+
+
+def test_frames_given_to_a_run_are_whole_images(template_run: Run) -> None:
+    assert template_run.result.scene.after_window == WHOLE_IMAGE
+
+
+def test_the_scene_keeps_the_window_the_after_frames_were_cut_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pair, _, _ = scene_clouds(SEEDS[0])
+    window = ImageWindow(0.0, 0.125, 1.0, 0.875)
+    info = VideoInfo(fps=30.0, frame_count=6, width=800, height=400)
+
+    def load(*args: object) -> LoadedVideos:
+        return LoadedVideos(
+            video_frames(pair, Epoch.BEFORE),
+            video_frames(pair, Epoch.AFTER),
+            info,
+            info,
+            window,
+        )
+
+    monkeypatch.setattr(run_module, "load_video_frames", load)
+
+    result = run_videos(
+        Path("a.mp4"),
+        Path("b.mp4"),
+        tmp_path / "out",
+        TEMPLATE,
+        synthetic_models(pair, Timeline()),
+    )
+
+    assert result.scene.after_window == window
+    assert result.report.metadata["after_cropped_to_before_aspect"] is True
+
+
+def test_the_scene_keeps_the_aligned_frames_with_their_depth(
+    template_run: Run,
+) -> None:
+    scene = template_run.result.scene
+    metadata = template_run.result.report.metadata
+
+    assert len(scene.before_frames) == metadata["frames_before"]
+    assert len(scene.after_frames) == metadata["frames_after"]
+    assert {f.epoch for f in scene.before_frames} == {Epoch.BEFORE}
+    assert {f.epoch for f in scene.after_frames} == {Epoch.AFTER}
+    for frame in (*scene.before_frames, *scene.after_frames):
+        assert frame.depth is not None
+        assert frame.confidence is not None
+    heights = [
+        f.world_from_camera.translation[2]
+        for f in (*scene.before_frames, *scene.after_frames)
+    ]
+    assert median(heights) == pytest.approx(metadata["camera_height_m"])
 
 
 def test_the_model_describer_sees_crops_and_unloads_last(vlm_run: Run) -> None:

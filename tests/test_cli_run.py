@@ -12,6 +12,7 @@ from spatial_change.pipeline import (
     Models,
     OutputFiles,
     PipelineResult,
+    RoomScene,
     RunConfig,
     StageEvent,
 )
@@ -56,7 +57,12 @@ class Spy:
         files = OutputFiles(*(out_dir / n for n in OUTPUT_FILES))
         report = ChangeReport(changes=[], unobserved_regions=[], metadata={})
         return PipelineResult(
-            report, (), files, {"voting": 4.23}, Sim3.identity()
+            report,
+            (),
+            files,
+            {"voting": 4.23},
+            Sim3.identity(),
+            RoomScene((), (), {}),
         )
 
 
