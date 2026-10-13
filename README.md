@@ -7,7 +7,11 @@ comes with a 3D box, a label, evidence counts, and a one-sentence description.
 Regions that only one video saw are reported as unobserved, never as change,
 so occlusion and unseen areas do not turn into false alarms.
 
-Results and demo media are not published yet.
+On the 92 indoor test pairs of the SceneDiff benchmark, run once with the
+shipped defaults, pixel IoU is 0.1174 and AP per scene is 0.0321.
+[docs/results.md](docs/results.md) has the full numbers, how the settings were
+chosen on the validation split, and the ablations. Demo media are not published
+yet.
 
 ## How it works
 
@@ -211,7 +215,8 @@ every stage are in the `*Config` dataclasses under `src/spatial_change/`.
 
 `evaluate` runs the system on [SceneDiff](https://github.com/yuqunw/scene_diff)
 pairs, scores each against its annotations, and pools the scores into
-`summary.json` in the results folder.
+`summary.json` in the results folder. The scores of the shipped defaults on the
+validation and test splits are in [docs/results.md](docs/results.md).
 
 ```bash
 # Download the indoor pairs of the validation split, run them, and score them.
