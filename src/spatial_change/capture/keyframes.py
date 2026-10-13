@@ -1,6 +1,6 @@
 """Keyframe selection from decoded video frames."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import cv2
@@ -115,8 +115,16 @@ def overlap(a_thumb: NDArray[np.uint8], b_thumb: NDArray[np.uint8]) -> float:
     return float(area * np.clip(ncc, 0.0, 1.0))
 
 
-def _uniform(items: list[int], count: int) -> list[int]:
-    """Picks ``count`` items spread evenly, keeping the first and last."""
+def uniform[T](items: Sequence[T], count: int) -> list[T]:
+    """Picks ``count`` items spread evenly, keeping the first and last.
+
+    Args:
+        items: The items in order, at least ``count`` of them.
+        count: How many to keep, at least 1.
+
+    Returns:
+        The kept items, in order.
+    """
     positions = np.linspace(0, len(items) - 1, count).round().astype(int)
     return [items[p] for p in positions]
 
@@ -169,7 +177,7 @@ def select_keyframes(
         selected.append(sharp[-1])
 
     if len(selected) > config.max_keyframes:
-        selected = _uniform(selected, config.max_keyframes)
+        selected = uniform(selected, config.max_keyframes)
     target = min(config.min_keyframes, len(sharp))
     candidates = [i for i in sharp if i not in selected]
     while len(selected) < target:

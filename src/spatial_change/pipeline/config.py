@@ -60,6 +60,13 @@ class RunConfig(BaseModel):
             ``template`` otherwise.
         device: The torch device of the models, or ``auto`` for CUDA when
             there is one and the CPU otherwise.
+        frame_stride: When set, each video contributes every frame whose
+            index is a multiple of this stride instead of the keyframes the
+            sharpness and overlap rules pick: no frame is dropped for being
+            blurry or redundant. Only above the keyframe cap (the smaller of
+            ``max_keyframes`` and half the views the reconstruction accepts)
+            are the frames thinned, evenly, keeping the first and the last.
+            At least 1, or ``None`` for the usual keyframes.
         seed: Seed of every random search and subsampling, at least 0.
     """
 
@@ -71,6 +78,7 @@ class RunConfig(BaseModel):
     voxel_size: float | None = Field(default=0.02, gt=0.0, allow_inf_nan=False)
     describer: Literal["auto", "vlm", "template"] = "auto"
     device: str = Field(default="auto", min_length=1)
+    frame_stride: int | None = Field(default=None, ge=1)
     seed: int = Field(default=0, ge=0)
 
     @field_validator("backbone_long_side")
@@ -140,6 +148,9 @@ class StageConfigs:
         max_keyframes: Keyframes kept per video.
         backbone_long_side: Longest side of the frames given to the
             reconstruction.
+        frame_stride: Stride of the frames each video contributes, thinned
+            evenly only above the keyframe cap, or ``None`` for the usual
+            keyframes.
         fusion_voxel_size: Voxel edge that thins a fused cloud, or ``None``.
         min_confidence: Pixels with a lower confidence stay out of the
             fused clouds.
@@ -161,6 +172,7 @@ class StageConfigs:
     sample_fps: float
     max_keyframes: int
     backbone_long_side: int
+    frame_stride: int | None
     fusion_voxel_size: float | None
     min_confidence: float
     floor: FloorConfig
@@ -196,6 +208,7 @@ def build_stage_configs(config: RunConfig, device: str) -> StageConfigs:
         sample_fps=config.sample_fps,
         max_keyframes=config.max_keyframes,
         backbone_long_side=config.backbone_long_side,
+        frame_stride=config.frame_stride,
         fusion_voxel_size=config.voxel_size,
         min_confidence=DEFAULT_MIN_CONFIDENCE,
         floor=replace(FloorConfig(), seed=seed),

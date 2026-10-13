@@ -9,6 +9,7 @@ from spatial_change.capture.keyframes import (
     KeyframeConfig,
     overlap,
     select_keyframes,
+    uniform,
 )
 from spatial_change.capture.sharpness import sharp_mask, sharpness
 from spatial_change.capture.video import VideoFrame
@@ -18,6 +19,12 @@ MakeFrames = Callable[..., list[VideoFrame]]
 
 def _gray(frame: VideoFrame) -> np.ndarray:
     return frame.image.mean(axis=2).astype(np.uint8)
+
+
+def test_uniform_keeps_the_first_and_last_and_spreads_the_rest() -> None:
+    assert uniform(list("abcdefghij"), 4) == ["a", "d", "g", "j"]
+    assert uniform(range(5), 5) == [0, 1, 2, 3, 4]
+    assert uniform(["only"], 1) == ["only"]
 
 
 def test_overlap_large_shift_is_low(make_frames: MakeFrames) -> None:

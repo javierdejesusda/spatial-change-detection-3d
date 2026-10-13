@@ -58,6 +58,22 @@ def test_the_knobs_reach_the_stage_configs() -> None:
     assert stages.rerun.seed == 7
 
 
+def test_the_frame_stride_is_off_by_default_and_reaches_the_stages() -> None:
+    assert RunConfig().frame_stride is None
+    assert build_stage_configs(RunConfig(), "cpu").frame_stride is None
+
+    stages = build_stage_configs(RunConfig(frame_stride=30), "cpu")
+
+    assert stages.frame_stride == 30
+
+
+def test_the_frame_stride_loads_from_a_json_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text('{"frame_stride": 15}', encoding="utf-8")
+
+    assert RunConfig.load(path).frame_stride == 15
+
+
 def test_every_geometric_stage_inherits_the_other_defaults() -> None:
     stages = build_stage_configs(RunConfig(), "cpu")
 
@@ -78,6 +94,8 @@ def test_every_geometric_stage_inherits_the_other_defaults() -> None:
         {"describer": "gpt"},
         {"device": ""},
         {"seed": -1},
+        {"frame_stride": 0},
+        {"frame_stride": -30},
     ],
 )
 def test_invalid_values_are_rejected(field: dict[str, Any]) -> None:
