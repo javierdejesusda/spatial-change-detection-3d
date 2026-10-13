@@ -100,6 +100,11 @@ class LoadedVideos:
         after_window: The part of the AFTER image the frames show; the
             whole image unless they were center-cropped to the BEFORE
             aspect.
+        strided_before: On a fixed frame stride, the BEFORE frames whose
+            index is a multiple of the stride, of which ``before`` holds
+            all or, above the keyframe cap, an even subset; ``None`` for
+            keyframes.
+        strided_after: The same for the AFTER video.
     """
 
     before: list[VideoFrame]
@@ -107,6 +112,8 @@ class LoadedVideos:
     before_info: VideoInfo
     after_info: VideoInfo
     after_window: ImageWindow
+    strided_before: int | None = None
+    strided_after: int | None = None
 
     @property
     def after_cropped(self) -> bool:
@@ -202,7 +209,7 @@ def _strided_frames(
     stride: int,
     cap: int,
     prepare: Callable[[NDArray[np.uint8]], NDArray[np.uint8]],
-) -> list[VideoFrame]:
+) -> tuple[list[VideoFrame], int]:
     """Decodes the frames whose index is a multiple of the stride.
 
     A fixed stride is a promise that the frames can be found by their index,
@@ -218,7 +225,8 @@ def _strided_frames(
         prepare: Turns a decoded image into the image that is kept.
 
     Returns:
-        The frames in temporal order.
+        The frames in temporal order, and how many frames were on the stride
+        before any were thinned out.
 
     Raises:
         ValueError: If no frame is left.
@@ -231,11 +239,12 @@ def _strided_frames(
         VideoFrame(frame.index, frame.timestamp_s, prepare(frame.image))
         for frame in capture.read_frames(path, stride)
     ]
-    if len(frames) > cap:
+    on_stride = len(frames)
+    if on_stride > cap:
         frames = uniform(frames, cap)
     if not frames:
         raise ValueError(f"no frame on the stride in video: {path}")
-    return frames
+    return frames, on_stride
 
 
 def _frame_rate(info: VideoInfo) -> float:
@@ -259,7 +268,8 @@ def load_video_frames(
     of view shape and no frame is stretched.
 
     With ``stages.frame_stride`` set, the frames are those whose index is a
-    multiple of the stride instead of the sharpest and least redundant ones.
+    multiple of the stride instead of the sharpest and least redundant ones,
+    and the result says how many there were before any were thinned out.
 
     Args:
         before_path: The BEFORE video.
@@ -302,9 +312,21 @@ def load_video_frames(
 
     stride = stages.frame_stride
     if stride is not None:
-        before = _strided_frames(before_path, stride, cap, prepare_before)
-        after = _strided_frames(after_path, stride, cap, prepare_after)
-        return LoadedVideos(before, after, infos[0], infos[1], window)
+        before, strided_before = _strided_frames(
+            before_path, stride, cap, prepare_before
+        )
+        after, strided_after = _strided_frames(
+            after_path, stride, cap, prepare_after
+        )
+        return LoadedVideos(
+            before,
+            after,
+            infos[0],
+            infos[1],
+            window,
+            strided_before,
+            strided_after,
+        )
     strides = [
         max(1, round(_frame_rate(info) / stages.sample_fps)) for info in infos
     ]

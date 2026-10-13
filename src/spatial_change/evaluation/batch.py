@@ -65,9 +65,13 @@ from spatial_change.pipeline import (
     StageEvent,
     run_videos,
 )
-from spatial_change.pipeline.config import build_stage_configs, resolve_device
+from spatial_change.pipeline.config import (
+    MAX_VIDEO_KEYFRAMES,
+    build_stage_configs,
+    resolve_device,
+)
 
-RECORD_VERSION = 3
+RECORD_VERSION = 4
 """Format of ``result.json``; part of the settings, so a new format makes
 every old record stale."""
 PAIRS_DIR = "pairs"
@@ -130,6 +134,9 @@ class PairRecord(BaseModel):
             of the BEFORE frames.
         frames_before: BEFORE frames the reconstruction used.
         frames_after: AFTER frames the reconstruction used.
+        frames_thinned: Whether a video had more frames on the stride than the
+            reconstruction used, so some scored frames got no prediction;
+            ``None`` if the run did not say.
         gt_matches_video: Whether the first ground-truth mask has the size of
             the BEFORE video; ``None`` without a mask or a video size. A
             ``False`` is recorded and the pair is still scored.
@@ -161,6 +168,7 @@ class PairRecord(BaseModel):
     after_cropped: bool | None
     frames_before: int | None
     frames_after: int | None
+    frames_thinned: bool | None
     gt_matches_video: bool | None
     metrics: Metrics | None
     error_type: str | None
@@ -187,6 +195,8 @@ class BatchSummary(BaseModel):
             out what the failures would have cost; ``None`` without one.
         floor_unobserved: Ok pairs in which no floor was seen.
         after_cropped: Ok pairs whose AFTER frames were cropped.
+        frames_thinned: Ok pairs with more frames on the stride than the
+            reconstruction used, so some scored frames have no prediction.
         gt_mismatch: Ok pairs whose ground truth is not the size of the
             BEFORE video.
         changes_by_type: Changes of the ok pairs by type.
@@ -206,6 +216,7 @@ class BatchSummary(BaseModel):
     metrics_ok_only: Metrics | None
     floor_unobserved: tuple[str, ...]
     after_cropped: tuple[str, ...]
+    frames_thinned: tuple[str, ...]
     gt_mismatch: tuple[str, ...]
     changes_by_type: dict[str, int]
     pairs: tuple[PairRecord, ...]
@@ -251,8 +262,17 @@ def _canonical(value: object) -> object:
 
 
 def _effective(config: RunConfig, eval_config: PairEvalConfig) -> RunConfig:
-    """Gives the run the frames that are scored, whatever the caller asked."""
-    return config.model_copy(update={"frame_stride": eval_config.stride})
+    """Gives the run the frames that are scored, whatever the caller asked.
+
+    The frame stride is that of ``eval_config``. The frame budget of each
+    video is raised to the most the reconstruction takes from one video, so
+    that no scored frame is thinned out, unless ``config`` sets it, as an
+    ablation of the budget does.
+    """
+    update: dict[str, int] = {"frame_stride": eval_config.stride}
+    if "max_keyframes" not in config.model_fields_set:
+        update["max_keyframes"] = MAX_VIDEO_KEYFRAMES
+    return config.model_copy(update=update)
 
 
 def settings_digest(
@@ -264,7 +284,8 @@ def settings_digest(
     and from the stage overrides, so an override equal to a default changes
     nothing, the weights and adapter settings of the models, how a run is
     projected, and the format of the record. The frame stride of ``config``
-    is replaced by the stride of ``eval_config``. What scoring alone
+    is replaced by the stride of ``eval_config``, and a frame budget it
+    leaves unset by the raised one the run uses. What scoring alone
     decides, the handling of uncertain objects, is not part of it, and
     neither is where the files live.
 
@@ -345,6 +366,18 @@ def _count(metadata: Mapping[str, MetadataValue], key: str) -> int | None:
     )
 
 
+def _frames_thinned(metadata: Mapping[str, MetadataValue]) -> bool | None:
+    """Tells whether a run used fewer frames than were on the stride."""
+    thinned = []
+    for epoch in ("before", "after"):
+        strided = _count(metadata, f"strided_frames_{epoch}")
+        used = _count(metadata, f"frames_{epoch}")
+        if strided is None or used is None:
+            return None
+        thinned.append(strided > used)
+    return any(thinned)
+
+
 def _gt_matches_video(
     annotations: PairAnnotations, metadata: Mapping[str, MetadataValue]
 ) -> bool | None:
@@ -392,6 +425,7 @@ def _ok_record(
         after_cropped=_flag(metadata, "after_cropped_to_before_aspect"),
         frames_before=_count(metadata, "frames_before"),
         frames_after=_count(metadata, "frames_after"),
+        frames_thinned=_frames_thinned(metadata),
         gt_matches_video=_gt_matches_video(annotations, metadata),
         metrics=metrics,
         error_type=None,
@@ -430,6 +464,7 @@ def _failed_record(
         after_cropped=None,
         frames_before=None,
         frames_after=None,
+        frames_thinned=None,
         gt_matches_video=None,
         metrics=None,
         error_type=type(error).__name__,
@@ -665,6 +700,7 @@ def _collect(
         metrics_ok_only=metrics_ok_only,
         floor_unobserved=tuple(r.pair for r in ok if r.floor_observed is False),
         after_cropped=tuple(r.pair for r in ok if r.after_cropped is True),
+        frames_thinned=tuple(r.pair for r in ok if r.frames_thinned is True),
         gt_mismatch=tuple(r.pair for r in ok if r.gt_matches_video is False),
         changes_by_type=dict(sorted(kinds.items())),
         pairs=tuple(found),

@@ -357,6 +357,41 @@ def test_strided_frames_beyond_the_cap_are_thinned_evenly_on_the_stride(
     assert [f.index for f in loaded.after] == expected
 
 
+@pytest.mark.parametrize(
+    ("counts", "max_frames", "strided", "kept"),
+    [
+        ((100, 130), 4, (4, 5), (2, 2)),
+        ((100, 130), 6, (4, 5), (3, 3)),
+        ((100, 130), 128, (4, 5), (4, 5)),
+        ((91, 90), 128, (4, 3), (4, 3)),
+    ],
+)
+def test_a_fixed_stride_counts_the_frames_that_qualified_before_thinning(
+    tmp_path: Path,
+    counts: tuple[int, int],
+    max_frames: int,
+    strided: tuple[int, int],
+    kept: tuple[int, int],
+) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, counts[0], seed=1)
+    after = noise_video(tmp_path / "b.mp4", 160, 120, counts[1], seed=2)
+
+    loaded = load_video_frames(before, after, SCORED, max_frames=max_frames)
+
+    assert (loaded.strided_before, loaded.strided_after) == strided
+    assert (len(loaded.before), len(loaded.after)) == kept
+
+
+def test_keyframes_have_no_strided_count(tmp_path: Path) -> None:
+    before = noise_video(tmp_path / "a.mp4", 160, 120, 90, seed=1)
+    after = noise_video(tmp_path / "b.mp4", 160, 120, 90, seed=2)
+
+    loaded = load_video_frames(before, after, STAGES, max_frames=128)
+
+    assert loaded.strided_before is None
+    assert loaded.strided_after is None
+
+
 def test_a_wider_after_video_is_still_cropped_on_a_fixed_stride(
     tmp_path: Path,
 ) -> None:

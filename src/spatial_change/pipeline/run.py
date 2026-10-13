@@ -180,6 +180,9 @@ def run_videos(
         "video_after_frames": videos.after_info.frame_count,
         "after_cropped_to_before_aspect": videos.after_cropped,
     }
+    if videos.strided_before is not None and videos.strided_after is not None:
+        extra["strided_frames_before"] = videos.strided_before
+        extra["strided_frames_after"] = videos.strided_after
     return _run(
         videos.before,
         videos.after,

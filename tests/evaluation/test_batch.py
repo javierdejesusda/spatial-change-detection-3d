@@ -57,7 +57,7 @@ from spatial_change.pipeline import (
     RunConfig,
     StageEvent,
 )
-from spatial_change.pipeline.config import StageConfigs
+from spatial_change.pipeline.config import MAX_VIDEO_KEYFRAMES, StageConfigs
 from spatial_change.visualization import RerunConfig
 
 CONFIG = RunConfig(device="cpu", describer="template")
@@ -283,6 +283,71 @@ def test_an_ok_record_holds_what_the_run_found(
         None,
         None,
         None,
+    )
+
+
+THINNED = {"strided_frames_before": 54, "strided_frames_after": 40}
+WHOLE = {"strided_frames_before": 40, "strided_frames_after": 40}
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        (THINNED, True),
+        ({"strided_frames_before": 40, "strided_frames_after": 49}, True),
+        (WHOLE, False),
+        ({}, None),
+        ({"strided_frames_before": 54}, None),
+    ],
+    ids=["before", "after", "whole", "unknown", "half"],
+)
+def test_a_pair_records_whether_its_strided_frames_were_thinned(
+    tmp_path: Path,
+    run: PipelineResult,
+    extra: dict[str, int],
+    expected: bool | None,
+) -> None:
+    make_data(tmp_path, ["a"], run)
+    counted = with_metadata(run, frames_before=40, frames_after=40, **extra)
+
+    batch(tmp_path, ["a"], Runner({"a": counted}))
+
+    assert read_record(tmp_path / "out", "a").frames_thinned is expected
+
+
+def test_a_failed_pair_does_not_say_whether_its_frames_were_thinned(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+
+    batch(tmp_path, ["a"], Runner({"a": RuntimeError("boom")}))
+
+    assert read_record(tmp_path / "out", "a").frames_thinned is None
+
+
+def test_the_summary_lists_the_pairs_whose_frames_were_thinned(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    names = ["thin", "whole", "unknown", "broken"]
+    make_data(tmp_path, names, run)
+    sizes = {"frames_before": 40, "frames_after": 40}
+    runner = Runner(
+        {
+            "thin": with_metadata(run, **sizes, **THINNED),
+            "whole": with_metadata(run, **sizes, **WHOLE),
+            "unknown": run,
+            "broken": RuntimeError("boom"),
+        }
+    )
+
+    summary = batch(tmp_path, names, runner)
+
+    assert summary.frames_thinned == ("thin",)
+    assert json.loads((tmp_path / "out/summary.json").read_text("utf-8"))[
+        "frames_thinned"
+    ] == ["thin"]
+    assert (
+        summarize(names, tmp_path / "data", tmp_path / "out", EVAL) == summary
     )
 
 
@@ -563,7 +628,9 @@ def test_the_runner_gets_the_cache_the_run_folder_and_overwrite(
     assert call.cache_dir == cache
     assert call.out_dir == tmp_path / "out" / "pairs" / "a" / "run"
     assert call.overwrite is True
-    assert call.config == CONFIG.model_copy(update={"frame_stride": 1})
+    assert call.config == CONFIG.model_copy(
+        update={"frame_stride": 1, "max_keyframes": MAX_VIDEO_KEYFRAMES}
+    )
     assert call.models is MODELS
     assert call.before == tmp_path / "data" / "a" / "video1.mp4"
     assert call.after == tmp_path / "data" / "a" / "video2.mov"
@@ -589,7 +656,7 @@ def test_the_frames_of_the_run_are_the_frames_that_are_scored(
 
     assert runner.calls[0].config.frame_stride == 5
     assert runner.calls[0].config == config.model_copy(
-        update={"frame_stride": 5}
+        update={"frame_stride": 5, "max_keyframes": MAX_VIDEO_KEYFRAMES}
     )
 
 
@@ -773,6 +840,53 @@ def test_the_digest_follows_the_stage_settings_in_effect() -> None:
     assert later == digest(appearance={"changed_below": 0.3})
     assert digest(appearance={"changed_below": 0.4}) == base
     assert digest() == base
+
+
+def test_the_runner_gets_the_frame_budget_that_covers_the_scored_frames(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a", "b"], run)
+    default, asked = Runner({"a": run}), Runner({"b": run})
+
+    batch(tmp_path, ["a"], default)
+    run_batch(
+        ["b"],
+        tmp_path / "data",
+        tmp_path / "out",
+        RunConfig(device="cpu", describer="template", max_keyframes=12),
+        MODELS,
+        eval_config=EVAL,
+        runner=asked,
+    )
+
+    assert default.calls[0].config.frame_stride == EVAL.stride
+    assert default.calls[0].config.max_keyframes == MAX_VIDEO_KEYFRAMES
+    assert asked.calls[0].config.max_keyframes == 12
+
+
+def test_a_frame_budget_set_to_the_default_is_still_the_one_asked() -> None:
+    asked = RunConfig.model_validate(
+        {"device": "cpu", "describer": "template", "max_keyframes": 48}
+    )
+
+    assert RunConfig().max_keyframes == 48
+    assert batch_module._effective(asked, EVAL).max_keyframes == 48
+    assert batch_module._effective(CONFIG, EVAL).max_keyframes == (
+        MAX_VIDEO_KEYFRAMES
+    )
+
+
+def test_the_digest_follows_the_frame_budget_that_runs() -> None:
+    def digest(**knobs: int) -> str:
+        config = RunConfig(device="cpu", describer="template", **knobs)
+        return settings_digest(config, MODELS, EVAL)
+
+    base = settings_digest(CONFIG, MODELS, EVAL)
+
+    assert digest() == base
+    assert digest(max_keyframes=MAX_VIDEO_KEYFRAMES) == base
+    assert digest(max_keyframes=48) != base
+    assert digest(max_keyframes=12) not in {base, digest(max_keyframes=48)}
 
 
 def test_where_things_live_does_not_change_the_settings(

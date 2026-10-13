@@ -307,6 +307,55 @@ def test_the_scene_keeps_the_window_the_after_frames_were_cut_to(
     assert result.report.metadata["after_cropped_to_before_aspect"] is True
 
 
+@pytest.mark.parametrize(
+    ("strided", "expected"),
+    [
+        ((7, 5), {"strided_frames_before": 7, "strided_frames_after": 5}),
+        (None, {}),
+    ],
+)
+def test_a_run_on_a_stride_records_how_many_frames_qualified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    strided: tuple[int, int] | None,
+    expected: dict[str, int],
+) -> None:
+    pair, _, _ = scene_clouds(SEEDS[0])
+    info = VideoInfo(fps=30.0, frame_count=6, width=800, height=400)
+    counts = (
+        {}
+        if strided is None
+        else {
+            "strided_before": strided[0],
+            "strided_after": strided[1],
+        }
+    )
+
+    def load(*args: object) -> LoadedVideos:
+        return LoadedVideos(
+            video_frames(pair, Epoch.BEFORE),
+            video_frames(pair, Epoch.AFTER),
+            info,
+            info,
+            WHOLE_IMAGE,
+            **counts,
+        )
+
+    monkeypatch.setattr(run_module, "load_video_frames", load)
+
+    result = run_videos(
+        Path("a.mp4"),
+        Path("b.mp4"),
+        tmp_path / "out",
+        TEMPLATE,
+        synthetic_models(pair, Timeline()),
+    )
+
+    metadata = result.report.metadata
+    found = {k: v for k, v in metadata.items() if k.startswith("strided_")}
+    assert found == expected
+
+
 def test_the_scene_keeps_the_aligned_frames_with_their_depth(
     template_run: Run,
 ) -> None:
