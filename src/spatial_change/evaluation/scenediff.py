@@ -29,6 +29,20 @@ _SIGN_BIT = 0x10
 _FIRST_DELTA_RUN = 3
 _MAX_RUN_CHARS = 7
 
+SEGMENTS_FILE = "segments.pkl"
+"""Name of the annotations in a pair folder."""
+
+BEFORE_VIDEO = "video1"
+"""Stem of the BEFORE video in a pair folder."""
+
+AFTER_VIDEO = "video2"
+"""Stem of the AFTER video in a pair folder."""
+
+VIDEO_EXTENSIONS = frozenset({".mp4", ".mov"})
+"""Extensions of the videos of a pair, in lower case."""
+
+_PAIR_RE = re.compile(r"[A-Za-z0-9_-]+")
+
 MAX_SIDE = 16384
 MAX_PIXELS = 1 << 28
 """Largest accepted mask side and pixel count, bounding what a hostile
@@ -281,7 +295,87 @@ def load_pair_annotations(pair: str, pair_dir: Path) -> PairAnnotations:
         pickle.UnpicklingError: If the file references any global.
         ValueError: If the annotations are malformed.
     """
-    return parse_pair_annotations(pair, safe_load(pair_dir / "segments.pkl"))
+    return parse_pair_annotations(pair, safe_load(pair_dir / SEGMENTS_FILE))
+
+
+def first_mask_shape(ann: PairAnnotations) -> tuple[int, int] | None:
+    """Gives the stored size of the first annotated mask of a pair.
+
+    Args:
+        ann: The pair annotations.
+
+    Returns:
+        ``(height, width)`` as stored, looking in the first video before the
+        second, or ``None`` if the pair has no mask.
+    """
+    for video in (1, 2):
+        for obj in ann.objects:
+            for mask in obj.frames[video].values():
+                return mask.height, mask.width
+    return None
+
+
+def check_pair(pair: str) -> None:
+    """Checks that a pair name is safe to use as a folder name.
+
+    Args:
+        pair: Pair directory name.
+
+    Raises:
+        ValueError: If the name is empty or has a character other than a
+            letter, a digit, an underscore, or a hyphen.
+    """
+    if _PAIR_RE.fullmatch(pair) is None:
+        raise ValueError(f"invalid pair name: {pair!r}")
+
+
+def list_pairs(data_dir: Path) -> list[str]:
+    """Names the pairs in a folder: its subfolders that hold annotations.
+
+    Args:
+        data_dir: Folder with one subfolder per pair.
+
+    Returns:
+        The pair names, sorted.
+
+    Raises:
+        FileNotFoundError: If the folder does not exist.
+    """
+    return sorted(
+        folder.name
+        for folder in data_dir.iterdir()
+        if (folder / SEGMENTS_FILE).is_file()
+    )
+
+
+def find_video(pair_dir: Path, stem: str) -> Path:
+    """Finds ``<stem>.mp4`` or ``<stem>.mov`` in a pair folder, any case.
+
+    Args:
+        pair_dir: The pair folder.
+        stem: ``BEFORE_VIDEO`` or ``AFTER_VIDEO``.
+
+    Returns:
+        The video file.
+
+    Raises:
+        FileNotFoundError: If the folder or the video is missing.
+        ValueError: If several files qualify.
+    """
+    if not pair_dir.is_dir():
+        raise FileNotFoundError(f"pair folder not found: {pair_dir}")
+    found = sorted(
+        path
+        for path in pair_dir.iterdir()
+        if path.is_file()
+        and path.stem.lower() == stem
+        and path.suffix.lower() in VIDEO_EXTENSIONS
+    )
+    if not found:
+        raise FileNotFoundError(f"no {stem}.mp4 or {stem}.mov in {pair_dir}")
+    if len(found) > 1:
+        raise ValueError(f"several {stem} files in {pair_dir}")
+    return found[0]
 
 
 INDOOR_CATEGORIES = frozenset(
@@ -395,11 +489,10 @@ def eval_size(
     Returns:
         ``(height, width)``, or ``None`` if the pair has no mask.
     """
-    for video in (1, 2):
-        for obj in ann.objects:
-            for mask in obj.frames[video].values():
-                return official_eval_hw(mask.height, mask.width, max_length)
-    return None
+    shape = first_mask_shape(ann)
+    if shape is None:
+        return None
+    return official_eval_hw(*shape, max_length)
 
 
 def gt_items(

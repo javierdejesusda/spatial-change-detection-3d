@@ -14,9 +14,14 @@ from rle_helpers import encode_mask
 from spatial_change.domain import ChangeType
 from spatial_change.evaluation import scenediff
 from spatial_change.evaluation.scenediff import (
+    SEGMENTS_FILE,
     PairAnnotations,
     change_type_from_flags,
+    check_pair,
+    find_video,
+    first_mask_shape,
     indoor_pairs,
+    list_pairs,
     load_pair_annotations,
     parse_pair_annotations,
     scene_category,
@@ -293,6 +298,83 @@ def test_eval_size_comes_from_the_first_annotated_mask() -> None:
 
 def test_eval_size_is_none_for_an_empty_pair() -> None:
     assert scenediff.eval_size(parse_pair_annotations("p", _raw([])), 3) is None
+
+
+def test_the_first_mask_shape_is_its_stored_height_and_width() -> None:
+    ann = parse_pair_annotations("p", _raw([(True, True)]))
+
+    assert first_mask_shape(ann) == (6, 4)
+
+
+def test_the_first_mask_shape_is_found_in_the_second_video_too() -> None:
+    ann = parse_pair_annotations("p", _raw([(False, True)]))
+
+    assert first_mask_shape(ann) == (6, 4)
+
+
+def test_a_pair_without_masks_has_no_mask_shape() -> None:
+    assert first_mask_shape(parse_pair_annotations("p", _raw([]))) is None
+
+
+def test_the_pairs_of_a_folder_are_the_subfolders_with_annotations(
+    tmp_path: Path,
+) -> None:
+    for name in ("b", "a"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / SEGMENTS_FILE).write_bytes(b"")
+    (tmp_path / "without").mkdir()
+    (tmp_path / "stray.txt").write_text("", encoding="utf-8")
+
+    assert list_pairs(tmp_path) == ["a", "b"]
+
+
+def test_the_pairs_of_a_missing_folder_are_an_error(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        list_pairs(tmp_path / "absent")
+
+
+@pytest.mark.parametrize(
+    "name", ["video1.mp4", "video1.MOV", "VIDEO1.Mp4", "video1.mov"]
+)
+def test_a_video_is_found_whatever_the_case(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_bytes(b"")
+    (tmp_path / "video2.mp4").write_bytes(b"")
+    (tmp_path / "video10.mp4").write_bytes(b"")
+
+    assert find_video(tmp_path, "video1") == tmp_path / name
+
+
+def test_a_missing_video_is_named(tmp_path: Path) -> None:
+    (tmp_path / "video1.avi").write_bytes(b"")
+
+    with pytest.raises(FileNotFoundError, match="video1.mp4 or video1.mov"):
+        find_video(tmp_path, "video1")
+
+
+def test_a_folder_that_is_absent_is_named(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="pair folder not found"):
+        find_video(tmp_path / "absent", "video1")
+
+
+def test_two_videos_of_one_kind_are_ambiguous(tmp_path: Path) -> None:
+    (tmp_path / "video1.mp4").write_bytes(b"")
+    (tmp_path / "video1.mov").write_bytes(b"")
+
+    with pytest.raises(ValueError, match="several video1"):
+        find_video(tmp_path, "video1")
+
+
+@pytest.mark.parametrize("name", ["a", "living_room_3_living_room_4", "A-1_b"])
+def test_a_safe_pair_name_passes(name: str) -> None:
+    check_pair(name)
+
+
+@pytest.mark.parametrize(
+    "name", ["", "../x", "a/b", "a\\b", "a b", "a.b", "x\n"]
+)
+def test_an_unsafe_pair_name_is_rejected(name: str) -> None:
+    with pytest.raises(ValueError, match="invalid pair name"):
+        check_pair(name)
 
 
 def test_gt_items_keep_every_stride_th_frame() -> None:

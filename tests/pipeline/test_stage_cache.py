@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pytest
 from appearance_scenes import reconstruction
-from pipeline_scenes import PATCH, TEMPLATE, Timeline, run_pair
+from pipeline_scenes import PATCH, TEMPLATE, Timeline, inert_models, run_pair
 from rotations import rotation_z
 
 from spatial_change.cache import CacheKey, StageCache
@@ -51,23 +51,8 @@ DEPTH_W, DEPTH_H = 8, 6
 IMAGE_W, IMAGE_H = 16, 12
 
 
-def models(**ids: str) -> Models:
-    def unused() -> object:
-        raise AssertionError("a model was built")
-
-    return Models(
-        reconstructor=unused,  # type: ignore[arg-type]
-        encoder=unused,  # type: ignore[arg-type]
-        segmenter=unused,  # type: ignore[arg-type]
-        labeler=unused,  # type: ignore[arg-type]
-        vlm=unused,  # type: ignore[arg-type]
-        max_frames=128,
-        ids={"reconstruction": "pi3x", "features": "dino", **ids},
-    )
-
-
 def with_settings(role: str, **values: int | str) -> Models:
-    return dataclasses.replace(models(), settings={role: values})
+    return dataclasses.replace(inert_models(), settings={role: values})
 
 
 def stages() -> StageConfigs:
@@ -155,7 +140,7 @@ def test_a_joint_reconstruction_survives_the_store_with_its_images(
     before, after = video_frames(rng, 3), video_frames(rng, 2, 100)
     joint = joint_of(rng, before, after)
     cache = StageCache(tmp_path)
-    key = reconstruction_key(before, after, models())
+    key = reconstruction_key(before, after, inert_models())
 
     stored = cache.put(key, *joint_to_entry(joint))
     restored = joint_from_entry(stored, before, after)
@@ -179,7 +164,7 @@ def test_an_entry_of_other_frames_is_refused_on_load(tmp_path: Path) -> None:
     before, after = video_frames(rng, 3), video_frames(rng, 2, 100)
     joint = joint_of(rng, before, after)
     stored = StageCache(tmp_path).put(
-        reconstruction_key(before, after, models()),
+        reconstruction_key(before, after, inert_models()),
         *joint_to_entry(joint),
     )
 
@@ -217,7 +202,7 @@ def epochs_of(
 def test_a_cross_appearance_survives_the_store_exactly(tmp_path: Path) -> None:
     rng = np.random.default_rng(3)
     appearance = appearance_of(rng)
-    key = appearance_key(*epochs_of(rng), models(), stages())
+    key = appearance_key(*epochs_of(rng), inert_models(), stages())
 
     restored = appearance_from_entry(
         StageCache(tmp_path).put(key, *appearance_to_entry(appearance))
@@ -238,30 +223,32 @@ def test_a_cross_appearance_survives_the_store_exactly(tmp_path: Path) -> None:
 def test_the_reconstruction_key_follows_its_inputs_and_settings() -> None:
     rng = np.random.default_rng(4)
     before, after = video_frames(rng, 3), video_frames(rng, 2, 100)
-    base = reconstruction_key(before, after, models())
+    base = reconstruction_key(before, after, inert_models())
     pixel = before[1].image.copy()
     pixel[0, 0, 0] ^= 1
 
-    assert base == reconstruction_key(before, after, models())
+    assert base == reconstruction_key(before, after, inert_models())
     changed = {
         "pixel": reconstruction_key(
             [before[0], dataclasses.replace(before[1], image=pixel), before[2]],
             after,
-            models(),
+            inert_models(),
         ),
         "index": reconstruction_key(
             [dataclasses.replace(before[0], index=999), *before[1:]],
             after,
-            models(),
+            inert_models(),
         ),
         "timestamp": reconstruction_key(
             before,
             [dataclasses.replace(after[0], timestamp_s=77.0), after[1]],
-            models(),
+            inert_models(),
         ),
-        "split": reconstruction_key(before[:2], [before[2], *after], models()),
+        "split": reconstruction_key(
+            before[:2], [before[2], *after], inert_models()
+        ),
         "model": reconstruction_key(
-            before, after, models(reconstruction="other")
+            before, after, inert_models(reconstruction="other")
         ),
         "settings": reconstruction_key(
             before, after, with_settings("reconstruction", pixel_limit=7)
@@ -274,12 +261,14 @@ def test_the_reconstruction_key_follows_its_inputs_and_settings() -> None:
 def test_the_reconstruction_key_ignores_the_encoder() -> None:
     rng = np.random.default_rng(8)
     before, after = video_frames(rng, 2), video_frames(rng, 2, 100)
-    base = reconstruction_key(before, after, models())
+    base = reconstruction_key(before, after, inert_models())
 
     assert base == reconstruction_key(
         before, after, with_settings("features", model_id="x")
     )
-    assert base == reconstruction_key(before, after, models(features="other"))
+    assert base == reconstruction_key(
+        before, after, inert_models(features="other")
+    )
 
 
 @pytest.mark.parametrize("version", ["STAGE_VERSION", "__version__"])
@@ -290,14 +279,14 @@ def test_both_keys_follow_the_stage_and_package_versions(
     video = (video_frames(rng, 2), video_frames(rng, 2, 100))
     epochs = epochs_of(rng)
     base = (
-        reconstruction_key(*video, models()),
-        appearance_key(*epochs, models(), stages()),
+        reconstruction_key(*video, inert_models()),
+        appearance_key(*epochs, inert_models(), stages()),
     )
 
     monkeypatch.setattr(stage_cache, version, "bumped")
 
-    assert reconstruction_key(*video, models()) != base[0]
-    assert appearance_key(*epochs, models(), stages()) != base[1]
+    assert reconstruction_key(*video, inert_models()) != base[0]
+    assert appearance_key(*epochs, inert_models(), stages()) != base[1]
 
 
 def perturbed(
@@ -314,7 +303,7 @@ def perturbed(
 def test_the_appearance_key_follows_what_the_comparison_reads() -> None:
     rng = np.random.default_rng(6)
     before, after = epochs_of(rng)
-    base = appearance_key(before, after, models(), stages())
+    base = appearance_key(before, after, inert_models(), stages())
     points = before.points.copy()
     points[3, 1] += 1e-9
     frame = after.frames[1]
@@ -337,48 +326,48 @@ def test_the_appearance_key_follows_what_the_comparison_reads() -> None:
 
     changed = {
         "point": appearance_key(
-            perturbed(before, points=points), after, models(), stages()
+            perturbed(before, points=points), after, inert_models(), stages()
         ),
         "depth": appearance_key(
-            before, perturbed(after, 1, depth=depth), models(), stages()
+            before, perturbed(after, 1, depth=depth), inert_models(), stages()
         ),
         "confidence": appearance_key(
             before,
             perturbed(after, 1, confidence=confidence),
-            models(),
+            inert_models(),
             stages(),
         ),
         "image": appearance_key(
-            before, perturbed(after, 1, image=image), models(), stages()
+            before, perturbed(after, 1, image=image), inert_models(), stages()
         ),
         "pose": appearance_key(
             before,
             perturbed(after, 1, world_from_camera=pose),
-            models(),
+            inert_models(),
             stages(),
         ),
         "rotation": appearance_key(
             before,
             perturbed(after, 1, world_from_camera=turned),
-            models(),
+            inert_models(),
             stages(),
         ),
         "intrinsics": appearance_key(
             before,
             perturbed(after, 1, intrinsics=intrinsics),
-            models(),
+            inert_models(),
             stages(),
         ),
         "frame_count": appearance_key(
             before,
             perturbed(after, frames=after.frames[:1]),
-            models(),
+            inert_models(),
             stages(),
         ),
-        "swapped": appearance_key(after, before, models(), stages()),
+        "swapped": appearance_key(after, before, inert_models(), stages()),
     }
 
-    assert base == appearance_key(before, after, models(), stages())
+    assert base == appearance_key(before, after, inert_models(), stages())
     assert base not in changed.values()
     assert len(set(changed.values())) == len(changed)
 
@@ -392,18 +381,20 @@ def test_the_appearance_key_follows_the_encoder_and_its_settings() -> None:
             config, appearance=dataclasses.replace(config.appearance, **changes)
         )
 
-    base = appearance_key(before, after, models(), config)
+    base = appearance_key(before, after, inert_models(), config)
     changed = [
-        appearance_key(before, after, models(features="other"), config),
+        appearance_key(before, after, inert_models(features="other"), config),
         appearance_key(
             before,
             after,
             with_settings("features", fallback_model_id="x"),
             config,
         ),
-        appearance_key(before, after, models(), with_appearance(min_views=3)),
         appearance_key(
-            before, after, models(), with_appearance(voxel_size=0.1)
+            before, after, inert_models(), with_appearance(min_views=3)
+        ),
+        appearance_key(
+            before, after, inert_models(), with_appearance(voxel_size=0.1)
         ),
     ]
 
@@ -414,7 +405,7 @@ def test_the_appearance_key_follows_the_encoder_and_its_settings() -> None:
 def test_the_appearance_key_ignores_what_is_applied_later() -> None:
     before, after = epochs_of(np.random.default_rng(8))
     config = stages()
-    base = appearance_key(before, after, models(), config)
+    base = appearance_key(before, after, inert_models(), config)
 
     swept = dataclasses.replace(
         config,
@@ -428,8 +419,8 @@ def test_the_appearance_key_ignores_what_is_applied_later() -> None:
         floor=dataclasses.replace(config.floor, seed=42),
     )
 
-    assert base == appearance_key(before, after, models(), swept)
-    assert base == appearance_key(before, after, models(), realigned)
+    assert base == appearance_key(before, after, inert_models(), swept)
+    assert base == appearance_key(before, after, inert_models(), realigned)
 
 
 class FlakyCache(StageCache):
@@ -478,8 +469,8 @@ def test_a_miss_computes_once_and_returns_the_computed_value(
     compute = Counted(joint)
     cache = StageCache(tmp_path)
 
-    first = reconstruct_cached(cache, models(), before, after, compute)
-    second = reconstruct_cached(cache, models(), before, after, compute)
+    first = reconstruct_cached(cache, inert_models(), before, after, compute)
+    second = reconstruct_cached(cache, inert_models(), before, after, compute)
 
     assert compute.calls == 1
     assert first.value is joint
@@ -511,10 +502,10 @@ def test_without_a_cache_the_stage_just_computes_and_builds_no_key(
     compare = Counted((appearance, "dino"))
 
     reconstructed = reconstruct_cached(
-        None, models(), before, after, reconstruct
+        None, inert_models(), before, after, reconstruct
     )
     compared = appearance_cached(
-        None, models(), stages(), epoch_before, epoch_after, compare
+        None, inert_models(), stages(), epoch_before, epoch_after, compare
     )
 
     assert (reconstructed.value, reconstructed.hit) == (joint, False)
@@ -531,7 +522,9 @@ def test_a_failing_store_write_warns_and_the_stage_goes_on(
     compute = Counted(joint)
 
     with pytest.warns(RuntimeWarning, match="disk full"):
-        result = reconstruct_cached(cache, models(), before, after, compute)
+        result = reconstruct_cached(
+            cache, inert_models(), before, after, compute
+        )
 
     assert result.value is joint
     assert compute.calls == 1
@@ -547,7 +540,9 @@ def test_a_value_that_cannot_be_stored_warns_and_the_stage_goes_on(
     compute = Counted(joint)
 
     with pytest.warns(RuntimeWarning, match="depth and confidence"):
-        result = reconstruct_cached(cache, models(), before, after, compute)
+        result = reconstruct_cached(
+            cache, inert_models(), before, after, compute
+        )
 
     assert result.value is joint
     assert compute.calls == 1
@@ -563,7 +558,9 @@ def test_a_failing_store_read_warns_and_the_stage_computes(
     compute = Counted(joint)
 
     with pytest.warns(RuntimeWarning, match="locked"):
-        result = reconstruct_cached(cache, models(), before, after, compute)
+        result = reconstruct_cached(
+            cache, inert_models(), before, after, compute
+        )
 
     assert result.value is joint
     assert not result.hit
@@ -575,14 +572,16 @@ def test_a_loadable_but_invalid_entry_is_replaced_by_a_fresh_one(
 ) -> None:
     before, after, joint = reconstruction_setup()
     cache = StageCache(tmp_path)
-    key = reconstruction_key(before, after, models())
+    key = reconstruction_key(before, after, inert_models())
     other = joint_of(np.random.default_rng(1), before[:2], after)
     cache.put(key, *joint_to_entry(other))
     compute = Counted(joint)
 
     with pytest.warns(RuntimeWarning, match="reconstruction"):
-        first = reconstruct_cached(cache, models(), before, after, compute)
-    second = reconstruct_cached(cache, models(), before, after, compute)
+        first = reconstruct_cached(
+            cache, inert_models(), before, after, compute
+        )
+    second = reconstruct_cached(cache, inert_models(), before, after, compute)
 
     assert first.value is joint
     assert not first.hit
@@ -594,14 +593,16 @@ def test_a_loadable_but_invalid_entry_is_replaced_by_a_fresh_one(
 def test_an_entry_with_a_missing_array_is_replaced(tmp_path: Path) -> None:
     before, after, joint = reconstruction_setup()
     cache = StageCache(tmp_path)
-    key = reconstruction_key(before, after, models())
+    key = reconstruction_key(before, after, inert_models())
     arrays, meta = joint_to_entry(joint)
     del arrays["after_depth"]
     cache.put(key, arrays, meta)
     compute = Counted(joint)
 
     with pytest.warns(RuntimeWarning, match="reconstruction"):
-        result = reconstruct_cached(cache, models(), before, after, compute)
+        result = reconstruct_cached(
+            cache, inert_models(), before, after, compute
+        )
 
     assert result.value is joint
     assert compute.calls == 1
@@ -612,9 +613,11 @@ def test_an_appearance_miss_computes_once_then_hits(tmp_path: Path) -> None:
     compute = Counted((appearance, "dino"))
     cache = StageCache(tmp_path)
 
-    first = appearance_cached(cache, models(), stages(), before, after, compute)
+    first = appearance_cached(
+        cache, inert_models(), stages(), before, after, compute
+    )
     second = appearance_cached(
-        cache, models(), stages(), before, after, compute
+        cache, inert_models(), stages(), before, after, compute
     )
 
     assert compute.calls == 1
@@ -635,11 +638,11 @@ def test_an_appearance_of_a_fallback_encoder_is_not_stored(
 
     with pytest.warns(RuntimeWarning, match="fallback"):
         first = appearance_cached(
-            cache, models(), stages(), before, after, compute
+            cache, inert_models(), stages(), before, after, compute
         )
     with pytest.warns(RuntimeWarning, match="fallback"):
         second = appearance_cached(
-            cache, models(), stages(), before, after, compute
+            cache, inert_models(), stages(), before, after, compute
         )
 
     assert first.value is appearance
@@ -657,7 +660,12 @@ def test_an_encoder_that_never_loaded_gives_the_value_silently(
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         result = appearance_cached(
-            StageCache(tmp_path), models(), stages(), before, after, compute
+            StageCache(tmp_path),
+            inert_models(),
+            stages(),
+            before,
+            after,
+            compute,
         )
 
     assert result.value is appearance
@@ -669,7 +677,7 @@ def test_an_appearance_entry_of_the_wrong_shape_is_replaced(
 ) -> None:
     before, after, appearance = appearance_setup()
     cache = StageCache(tmp_path)
-    key = appearance_key(before, after, models(), stages())
+    key = appearance_key(before, after, inert_models(), stages())
     arrays, meta = appearance_to_entry(appearance)
     arrays["after_own_views"] = arrays["after_own_views"][:-1]
     cache.put(key, arrays, meta)
@@ -677,7 +685,7 @@ def test_an_appearance_entry_of_the_wrong_shape_is_replaced(
 
     with pytest.warns(RuntimeWarning, match="appearance"):
         result = appearance_cached(
-            cache, models(), stages(), before, after, compute
+            cache, inert_models(), stages(), before, after, compute
         )
 
     assert result.value is appearance

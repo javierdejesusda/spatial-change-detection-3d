@@ -481,7 +481,7 @@ def test_oversized_member_is_rejected_without_output(
 
     names = [p.name for p in (tmp_path / PAIR_MP4).iterdir()]
     assert leftover not in names
-    assert not any(name.endswith(".part") for name in names)
+    assert not any(name.endswith(".tmp") for name in names)
 
 
 def test_url_is_pinned_to_a_dataset_revision() -> None:

@@ -35,6 +35,31 @@ PATCH = 8
 TEMPLATE = RunConfig(device="cpu", describer="template", voxel_size=None)
 
 
+def inert_models(**ids: str) -> Models:
+    """Gives models whose factories fail the test that calls one.
+
+    Args:
+        **ids: Weights by role, over ``reconstruction`` ``pi3x`` and
+            ``features`` ``dino``.
+
+    Returns:
+        Models that only name their weights, for the code that reads the
+        names and never builds a model.
+    """
+
+    def unused() -> object:
+        raise AssertionError("a model was built")
+
+    return Models(
+        reconstructor=unused,  # type: ignore[arg-type]
+        encoder=unused,  # type: ignore[arg-type]
+        segmenter=unused,  # type: ignore[arg-type]
+        labeler=unused,  # type: ignore[arg-type]
+        vlm=unused,  # type: ignore[arg-type]
+        ids={"reconstruction": "pi3x", "features": "dino", **ids},
+    )
+
+
 @dataclass
 class Timeline:
     """What happened to the models, in order.

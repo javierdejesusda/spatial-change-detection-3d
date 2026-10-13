@@ -20,7 +20,15 @@ from http.client import IncompleteRead
 from pathlib import Path
 from typing import Literal
 
-from spatial_change.evaluation.scenediff import indoor_pairs
+from spatial_change.evaluation._files import atomic_path
+from spatial_change.evaluation.scenediff import (
+    AFTER_VIDEO,
+    BEFORE_VIDEO,
+    SEGMENTS_FILE,
+    VIDEO_EXTENSIONS,
+    check_pair,
+    indoor_pairs,
+)
 
 SCENEDIFF_REVISION = "d9e2115fae13daf219ed547bfb072a875aae4d7c"
 SCENEDIFF_URL = (
@@ -37,9 +45,7 @@ DEMO_PAIRS = (
 )
 
 _ROOT = "scenediff_benchmark"
-_PAIR_RE = re.compile(r"[A-Za-z0-9_-]+")
 _PROBE_RANGE_RE = re.compile(r"bytes 0-0/(\d+)")
-_VIDEO_EXTS = frozenset({".mp4", ".mov"})
 _BUFFER = 1 << 20
 _COPY_CHUNK = 8 << 20
 MAX_PICKLE_BYTES = 64 << 20
@@ -245,11 +251,6 @@ class PairMembers:
     segments: str
 
 
-def _check_pair(pair: str) -> None:
-    if _PAIR_RE.fullmatch(pair) is None:
-        raise ValueError(f"invalid pair name: {pair!r}")
-
-
 def find_pair_members(zf: zipfile.ZipFile, pair: str) -> PairMembers:
     """Locates the members of a pair, ignoring extension case.
 
@@ -274,7 +275,7 @@ def find_pair_members(zf: zipfile.ZipFile, pair: str) -> PairMembers:
                 name.startswith(prefix)
                 and leaf.lower().startswith(stem)
                 and "/" not in leaf
-                and Path(leaf).suffix.lower() in _VIDEO_EXTS
+                and Path(leaf).suffix.lower() in VIDEO_EXTENSIONS
             ):
                 return name
         raise KeyError(f"{pair}: missing original_video{index}")
@@ -312,13 +313,8 @@ def _extract_member(
         )
     if dest.is_file() and dest.stat().st_size == info.file_size:
         return
-    tmp = dest.with_name(dest.name + ".part")
-    try:
-        with zf.open(info) as src, tmp.open("wb") as out:
-            shutil.copyfileobj(src, out, _COPY_CHUNK)
-        os.replace(tmp, dest)
-    finally:
-        tmp.unlink(missing_ok=True)
+    with atomic_path(dest) as tmp, zf.open(info) as src, tmp.open("wb") as out:
+        shutil.copyfileobj(src, out, _COPY_CHUNK)
 
 
 def extract_pair(zf: zipfile.ZipFile, pair: str, dest_root: Path) -> Path:
@@ -342,22 +338,22 @@ def extract_pair(zf: zipfile.ZipFile, pair: str, dest_root: Path) -> Path:
             size exceeds the limit for its kind.
         KeyError: If the pair is missing from the archive.
     """
-    _check_pair(pair)
+    check_pair(pair)
     members = find_pair_members(zf, pair)
     pair_dir = dest_root / pair
     pair_dir.mkdir(parents=True, exist_ok=True)
     targets = (
         (
             members.video1,
-            "video1" + Path(members.video1).suffix.lower(),
+            BEFORE_VIDEO + Path(members.video1).suffix.lower(),
             MAX_VIDEO_BYTES,
         ),
         (
             members.video2,
-            "video2" + Path(members.video2).suffix.lower(),
+            AFTER_VIDEO + Path(members.video2).suffix.lower(),
             MAX_VIDEO_BYTES,
         ),
-        (members.segments, "segments.pkl", MAX_PICKLE_BYTES),
+        (members.segments, SEGMENTS_FILE, MAX_PICKLE_BYTES),
     )
     for member, name, limit in targets:
         _extract_member(zf, member, pair_dir / name, limit)
