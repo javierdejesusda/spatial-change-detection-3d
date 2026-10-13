@@ -1,3 +1,5 @@
+import json
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +16,31 @@ from spatial_change.change import (
     UnobservedConfig,
 )
 from spatial_change.pipeline import RunConfig
-from spatial_change.pipeline.config import build_stage_configs
+from spatial_change.pipeline.config import (
+    build_stage_configs,
+    override_fields,
+)
 from spatial_change.semantics import (
     LabelConfig,
     LandmarkConfig,
     RelationConfig,
 )
 from spatial_change.visibility import VisibilityConfig
+
+
+@dataclass(frozen=True)
+class Inner:
+    depth: int = 1
+
+
+@dataclass(frozen=True)
+class Outer:
+    name: str = "a"
+    ratio: float = 0.5
+    enabled: bool = True
+    count: int = 3
+    corner: tuple[int, int] = (0, 0)
+    inner: Inner = Inner()
 
 
 def test_the_defaults_are_valid_and_leave_the_stage_configs_alone() -> None:
@@ -174,3 +194,156 @@ def test_a_file_that_is_not_an_object_is_a_value_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="JSON object"):
         RunConfig.load(path)
+
+
+def test_no_stage_is_overridden_by_default() -> None:
+    assert RunConfig().stages == {}
+
+
+def test_a_stage_override_replaces_only_the_fields_it_names() -> None:
+    config = RunConfig(
+        seed=7,
+        stages={
+            "appearance": {"changed_below": 0.3},
+            "match": {"min_fitness": 0.8},
+        },
+    )
+
+    stages = build_stage_configs(config, "cpu")
+
+    assert stages.appearance == replace(AppearanceConfig(), changed_below=0.3)
+    assert stages.match.min_fitness == 0.8
+    assert stages.match.max_cost == MatchConfig().max_cost
+    assert stages.match.registration.seed == 7
+    assert stages.candidates == CandidateConfig()
+
+
+def test_a_nested_override_replaces_fields_of_the_nested_config() -> None:
+    config = RunConfig(
+        seed=7,
+        stages={
+            "lift": {"views": {"max_views": 7}},
+            "match": {"registration": {"voxel_size": 0.05}},
+            "landmarks": {"walls": {"min_width": 2.0}},
+        },
+    )
+
+    stages = build_stage_configs(config, "cpu")
+
+    assert stages.lift.views == replace(LiftConfig().views, max_views=7)
+    assert stages.match.registration.voxel_size == 0.05
+    assert stages.match.registration.seed == 7
+    assert stages.landmarks.walls.min_width == 2.0
+    assert stages.landmarks.walls.seed == 7
+
+
+def test_an_override_wins_over_what_the_run_injects() -> None:
+    config = RunConfig(seed=7, stages={"floor": {"seed": 99}})
+
+    assert build_stage_configs(config, "cpu").floor.seed == 99
+
+
+def test_the_overrides_load_from_a_json_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "seed": 3,
+                "stages": {
+                    "appearance": {"changed_below": 0.3},
+                    "lift": {"views": {"max_views": 7}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = RunConfig.load(path)
+
+    stages = build_stage_configs(config, "cpu")
+    assert stages.appearance.changed_below == 0.3
+    assert stages.lift.views.max_views == 7
+    assert RunConfig.load(path) == config
+    path.write_text(config.model_dump_json(), encoding="utf-8")
+    assert RunConfig.load(path) == config
+
+
+def test_an_integer_is_a_valid_value_for_a_float_field() -> None:
+    stages = build_stage_configs(
+        RunConfig(stages={"visibility": {"abs_tolerance": 1}}), "cpu"
+    )
+
+    assert stages.visibility.abs_tolerance == 1.0
+    assert isinstance(stages.visibility.abs_tolerance, float)
+
+
+@pytest.mark.parametrize(
+    ("stages", "fragments"),
+    [
+        ({"nope": {"x": 1}}, ["nope", "unknown stage"]),
+        ({"sample_fps": {"x": 1}}, ["sample_fps", "unknown stage"]),
+        (
+            {"appearance": {"changed_belw": 0.3}},
+            ["appearance", "changed_belw", "unknown field"],
+        ),
+        (
+            {"lift": {"views": {"max_viewz": 7}}},
+            ["lift.views", "max_viewz", "unknown field"],
+        ),
+        ({"visibility": {"device": "cuda"}}, ["visibility.device", "device"]),
+        ({"lift": {"views": 7}}, ["lift.views", "object"]),
+        (
+            {"appearance": {"changed_below": 2.0}},
+            ["appearance", "changed_below"],
+        ),
+        ({"lift": {"views": {"max_views": 0}}}, ["lift.views", "max_views"]),
+        (
+            {"appearance": {"changed_below": "0.3"}},
+            ["appearance.changed_below"],
+        ),
+        ({"appearance": {"min_views": 2.5}}, ["appearance.min_views"]),
+        ({"appearance": {"min_views": True}}, ["appearance.min_views"]),
+        ({"appearance": {"voxel_size": None}}, ["appearance.voxel_size"]),
+        (
+            {"rerun": {"change_colors": {"added": [1, 2, 3]}}},
+            ["rerun.change_colors"],
+        ),
+    ],
+)
+def test_a_bad_override_fails_when_the_config_is_built(
+    stages: dict[str, Any], fragments: list[str]
+) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        RunConfig(stages=stages)
+
+    message = str(excinfo.value)
+    for fragment in fragments:
+        assert fragment in message
+
+
+def test_a_stage_given_as_a_number_is_a_validation_error() -> None:
+    with pytest.raises(ValidationError, match="stages"):
+        RunConfig.model_validate({"stages": {"appearance": 0.3}})
+
+
+def test_a_json_list_becomes_a_tuple_where_the_field_is_a_tuple() -> None:
+    changed = override_fields(Outer(), {"corner": [3, 4]}, "outer")
+
+    assert changed.corner == (3, 4)
+    assert isinstance(changed.corner, tuple)
+
+
+def test_a_list_of_the_wrong_length_or_type_is_refused_for_a_tuple() -> None:
+    with pytest.raises(ValueError, match="outer.corner"):
+        override_fields(Outer(), {"corner": [3, 4, 5]}, "outer")
+    with pytest.raises(ValueError, match="outer.corner"):
+        override_fields(Outer(), {"corner": 3}, "outer")
+
+
+def test_override_fields_keeps_what_it_is_not_given() -> None:
+    changed = override_fields(
+        Outer(), {"ratio": 1, "inner": {"depth": 2}}, "outer"
+    )
+
+    assert changed == Outer(ratio=1.0, inner=Inner(depth=2))
+    assert override_fields(Outer(), {}, "outer") == Outer()

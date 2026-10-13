@@ -798,6 +798,39 @@ def test_a_later_threshold_reuses_both_entries(
     assert [len(entries(warm_cache, s)) for s in STAGE_DIRS] == [1, 1]
 
 
+def staged(**stages: dict[str, Any]) -> RunConfig:
+    return RunConfig.model_validate({**TEMPLATE.model_dump(), "stages": stages})
+
+
+def test_a_threshold_override_reuses_both_entries(
+    warm: Warm, warm_cache: Path, tmp_path: Path
+) -> None:
+    result, timeline = run_pair(
+        tmp_path / "out",
+        staged(appearance={"changed_below": 1.0}),
+        cache_dir=warm_cache,
+    )
+
+    assert result.report.metadata["cache_hits"] == "reconstruction,appearance"
+    assert timeline.roles() == WARM_ROLES
+    assert [len(entries(warm_cache, s)) for s in STAGE_DIRS] == [1, 1]
+    assert comparable(result) != comparable(warm.cold)
+
+
+def test_a_comparison_override_recomputes_the_appearance_pass(
+    warm_cache: Path, tmp_path: Path
+) -> None:
+    result, timeline = run_pair(
+        tmp_path / "out",
+        staged(appearance={"abs_tolerance": 0.04}),
+        cache_dir=warm_cache,
+    )
+
+    assert result.report.metadata["cache_hits"] == "reconstruction"
+    assert timeline.roles() == ["encoder", *WARM_ROLES]
+    assert [len(entries(warm_cache, s)) for s in STAGE_DIRS] == [1, 2]
+
+
 def test_an_alignment_setting_reuses_the_reconstruction_only(
     warm_cache: Path, tmp_path: Path
 ) -> None:

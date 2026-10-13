@@ -208,6 +208,7 @@ def test_usage_errors_exit_with_2(
     [
         ('{"max_keyframes": 1}', "max_keyframes"),
         ('{"unknown": 1}', "unknown"),
+        ('{"stages": {"appearance": {"changed_belw": 1}}}', "changed_belw"),
         ("{not json", "JSON"),
         (None, "missing.json"),
     ],

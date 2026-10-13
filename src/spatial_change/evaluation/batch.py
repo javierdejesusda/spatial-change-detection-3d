@@ -260,12 +260,13 @@ def settings_digest(
 ) -> str:
     """Hashes everything that decides what a pair's record says.
 
-    That is the knobs of the run, the config of every stage built from them,
-    the weights and adapter settings of the models, how a run is projected,
-    and the format of the record. The frame stride of ``config`` is replaced
-    by the stride of ``eval_config``. What scoring alone decides, the
-    handling of uncertain objects, is not part of it, and neither is where
-    the files live.
+    That is the knobs of the run, the config of every stage built from them
+    and from the stage overrides, so an override equal to a default changes
+    nothing, the weights and adapter settings of the models, how a run is
+    projected, and the format of the record. The frame stride of ``config``
+    is replaced by the stride of ``eval_config``. What scoring alone
+    decides, the handling of uncertain objects, is not part of it, and
+    neither is where the files live.
 
     Args:
         config: The knobs of the run.
@@ -279,7 +280,7 @@ def settings_digest(
     stages = build_stage_configs(config, resolve_device(config))
     payload = {
         "record_version": RECORD_VERSION,
-        "run": config.model_dump(mode="json"),
+        "run": config.model_dump(mode="json", exclude={"stages"}),
         "stages": _canonical(stages),
         "models": {
             "ids": _canonical(models.ids),

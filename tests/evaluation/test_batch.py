@@ -725,6 +725,55 @@ def test_records_of_other_settings_are_never_reused(
     )
 
 
+def test_a_record_made_without_stage_overrides_is_not_reused_with_them(
+    tmp_path: Path, run: PipelineResult
+) -> None:
+    make_data(tmp_path, ["a"], run)
+    batch(tmp_path, ["a"], Runner({"a": run}))
+    overridden = RunConfig(
+        device="cpu",
+        describer="template",
+        stages={"appearance": {"changed_below": 0.3}},
+    )
+    files = tmp_path / "data", tmp_path / "out"
+
+    def again(runner: Runner) -> None:
+        run_batch(
+            ["a"],
+            *files,
+            overridden,
+            MODELS,
+            eval_config=EVAL,
+            runner=runner,
+        )
+
+    first, second = Runner({"a": run}), Runner({"a": run})
+    again(first)
+    again(second)
+
+    assert [c.pair for c in first.calls] == ["a"]
+    assert first.calls[0].config.stages == overridden.stages
+    assert second.calls == []
+    assert read_record(tmp_path / "out", "a").settings == settings_digest(
+        overridden, MODELS, EVAL
+    )
+
+
+def test_the_digest_follows_the_stage_settings_in_effect() -> None:
+    def digest(**stages: dict[str, object]) -> str:
+        config = RunConfig(device="cpu", describer="template", stages=stages)
+        return settings_digest(config, MODELS, EVAL)
+
+    base = settings_digest(CONFIG, MODELS, EVAL)
+    later = digest(appearance={"changed_below": 0.3})
+    nested = digest(lift={"views": {"max_views": 7}})
+
+    assert len({base, later, nested}) == 3
+    assert later == digest(appearance={"changed_below": 0.3})
+    assert digest(appearance={"changed_below": 0.4}) == base
+    assert digest() == base
+
+
 def test_where_things_live_does_not_change_the_settings(
     tmp_path: Path, run: PipelineResult
 ) -> None:

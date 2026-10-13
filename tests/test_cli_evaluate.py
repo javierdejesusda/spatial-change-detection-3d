@@ -16,6 +16,7 @@ from spatial_change.evaluation.batch import (
 from spatial_change.evaluation.metrics import Metrics
 from spatial_change.evaluation.scene import PairEvalConfig
 from spatial_change.pipeline import RunConfig
+from spatial_change.pipeline.config import build_stage_configs
 
 METRICS = Metrics(0.5, 0.25, 0.75, 0.5, 3, 1, 2, 30, 10, 20)
 
@@ -240,6 +241,25 @@ def test_a_config_file_is_read_and_its_describer_is_kept(
     assert spy.runs[0]["config"] == RunConfig(
         seed=5, describer="vlm", max_keyframes=20
     )
+
+
+def test_the_stage_overrides_of_a_config_file_reach_the_batch(
+    spy: Spy, data: Path, tmp_path: Path
+) -> None:
+    stages = {
+        "appearance": {"changed_below": 0.3},
+        "lift": {"views": {"max_views": 7}},
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"stages": stages}), encoding="utf-8")
+
+    main(["evaluate", str(data), "--out", str(tmp_path), "--config", str(path)])
+
+    config = spy.runs[0]["config"]
+    assert config == RunConfig(describer="template", stages=stages)
+    built = build_stage_configs(config, "cpu")
+    assert built.appearance.changed_below == 0.3
+    assert built.lift.views.max_views == 7
 
 
 def test_the_describer_flag_wins_over_the_config_file(
@@ -617,6 +637,24 @@ def test_bad_settings_are_a_clean_usage_error(
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert fragment in err
+    assert "Traceback" not in err
+    assert spy.runs == []
+
+
+def test_a_bad_stage_override_is_a_clean_usage_error(
+    spy: Spy, data: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(
+        '{"stages": {"appearance": {"changed_belw": 0.3}}}', encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["evaluate", str(data), "--out", "o", "--config", str(path)])
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "appearance.changed_belw" in err
     assert "Traceback" not in err
     assert spy.runs == []
 
